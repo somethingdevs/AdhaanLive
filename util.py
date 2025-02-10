@@ -1,12 +1,46 @@
+import yaml
 import requests
+import logging
+import time
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
-def get_prayer_times(city="Dallas", country="US", method=2):
+# ✅ Load Configuration from YAML
+def load_config():
+    with open("config.yml", "r") as file:
+        return yaml.safe_load(file)
+
+
+CONFIG = load_config()
+
+# ✅ Set up logging
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# ✅ Config Variables
+CITY = CONFIG["settings"]["city"]
+COUNTRY = CONFIG["settings"]["country"]
+METHOD = CONFIG["settings"]["method"]
+LIVESTREAM_URL = CONFIG["livestream"]["url"]
+AUTO_UNMUTE = CONFIG["livestream"]["auto_unmute"]
+BROWSER = CONFIG["livestream"]["browser"]
+WAIT_TIME = CONFIG["livestream"]["wait_time"]
+
+
+def get_prayer_times():
     """
-    Fetches prayer times from Aladhan API and converts them into datetime.time objects.
+    Fetches prayer times from Aladhan API based on the config settings.
+    Converts them into datetime.time objects.
     """
-    api_url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country={country}&method={method}"
+    api_url = f"https://api.aladhan.com/v1/timingsByCity?city={CITY}&country={COUNTRY}&method={METHOD}"
+    logging.info(f"🕌 Fetching prayer times for {CITY}, {COUNTRY}...")
 
     response = requests.get(api_url, timeout=10000)
     data = response.json()
@@ -17,30 +51,18 @@ def get_prayer_times(city="Dallas", country="US", method=2):
             for name, time_str in data["data"]["timings"].items()
         }
     else:
-        print("⚠️ Error fetching prayer times!")
+        logging.error("⚠️ Error fetching prayer times!")
         return None
 
 
-import logging
-import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
-# ✅ Set up logging
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-
-# 🔗 Your livestream page
-LIVESTREAM_URL = "https://iaccplano.click2stream.com/"
-
-
 def unmute_video():
-    """Opens the livestream page, switches to the iframe, continuously hovers, and clicks the correct mute button."""
+    """
+    Opens the livestream page, switches to the iframe, continuously hovers over the video,
+    and clicks the correct mute button if auto_unmute is enabled.
+    """
+    if not AUTO_UNMUTE:
+        logging.info("🔕 Auto-unmute is disabled in config. Skipping...")
+        return
 
     logging.info("🚀 Starting the Chrome driver...")
     options = webdriver.ChromeOptions()
@@ -53,58 +75,38 @@ def unmute_video():
     driver.get(LIVESTREAM_URL)
 
     try:
-        # ✅ Step 1: Wait for the iframe to load
         logging.info("⏳ Waiting for the iframe to load...")
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
         iframe = driver.find_element(By.TAG_NAME, "iframe")
         driver.switch_to.frame(iframe)
         logging.info("📺 Switched to the video iframe.")
 
-        # ✅ Step 2: Wait for the video element
         logging.info("⏳ Waiting for the video element to appear...")
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "video")))
         video_element = driver.find_element(By.TAG_NAME, "video")
 
-        # ✅ Step 3: Continuous hover loop (keeps media controls open)
         logging.info("🎥 Starting continuous hover loop...")
         actions = ActionChains(driver)
-        hover_attempts = 0
 
-        while hover_attempts < 5:  # Try hovering 5 times
+        for _ in range(5):  # Try hovering 5 times
             actions.move_to_element(video_element).perform()
-            logging.info(f"🎥 Hover attempt {hover_attempts + 1}...")
-            time.sleep(1)  # Short delay between hovers
+            logging.info("🎥 Hovering over the video...")
+            time.sleep(1)
 
             try:
-                # ✅ Step 4: Locate mute button AFTER hover (prevents stale elements)
                 logging.info("🔍 Looking for the mute button...")
                 mute_button = WebDriverWait(driver, 3).until(
                     EC.presence_of_element_located((By.CLASS_NAME, "drawer-icon.media-control-icon"))
                 )
-                if mute_button:
-                    logging.info("✅ Mute button found!")
-                    break
+                logging.info("✅ Mute button found!")
+                mute_svg = mute_button.find_element(By.TAG_NAME, "svg")
+                mute_svg.click()
+                logging.info("🎉 Stream unmuted successfully!")
+                break
             except Exception:
                 logging.warning("⚠️ Mute button not found. Retrying hover...")
 
-            hover_attempts += 1
-
-        if hover_attempts == 5:
-            logging.error("❌ Mute button was not found after multiple hover attempts.")
-            return
-
-        # ✅ Step 5: Click the mute button (SVG inside div)
-        logging.info("🔊 Clicking the mute button...")
-        mute_svg = mute_button.find_element(By.TAG_NAME, "svg")
-        mute_svg.click()
-
-        logging.info("🎉 Stream unmuted successfully!")
-
     except Exception as e:
         logging.exception("❌ An error occurred during execution.")
-        logging.error(driver.page_source)  # Print page source for debugging
 
     logging.info("🎥 Browser will remain open. Verify if audio is playing.")
-
-# Run the function
-unmute_video()
