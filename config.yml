@@ -1,0 +1,11 @@
+settings:
+  city: "Dallas"
+  country: "US"
+  method: 2  # Calculation method for prayer times (2-ISNA)
+  school: 1 # 0 - Shafi 1 - Hanafi
+
+livestream:
+  url: "https://iaccplano.click2stream.com/" # Mosque click2stream link
+  auto_unmute: true  # Set to false if you don’t want Selenium to unmute
+  browser: "chrome"  # Options: chrome, brave
+  wait_time: 3  # Time to wait before interacting with the livestream
