@@ -6,6 +6,10 @@ import pyaudio
 from datetime import datetime
 from util import get_prayer_times, get_m3u8_url
 from tabulate import tabulate
+import ffmpeg
+import queue
+import select
+
 
 # ✅ Livestream URL (replace with your updated tokenized URL)
 LIVESTREAM_URL = "https://iaccplano.click2stream.com/"
@@ -46,33 +50,60 @@ def display_prayer_times(prayer_times):
 
     print("\n🕌 **Masjid Prayer Timings**\n" + tabulate(table, headers=headers, tablefmt="fancy_grid") + "\n")
 
-def detect_audio_start(threshold=0.20, duration=2, sample_rate=44100):
+def detect_audio_start(threshold=0, duration=2, sample_rate=44100):
     """
-    Detects Adhaan sound using the microphone.
-    - threshold: Minimum volume level to detect Adhaan.
-    - duration: Minimum continuous duration of sound to confirm Adhaan.
+    Detects Adhaan from the livestream audio.
+    - Uses FFmpeg to extract audio from the livestream.
+    - Reads the stream and processes volume levels in real-time.
+    - Triggers when a sustained loud sound (Adhaan) is detected.
     """
-    print("🎙️ Listening for Adhaan...")
+    print("🎙️ Listening for Adhaan in livestream audio...")
 
-    stream = sd.InputStream(samplerate=sample_rate, channels=1)
-    stream.start()
+    # ✅ Start FFmpeg Process for Audio Extraction
+    process = (
+        ffmpeg
+        .input(AUD_VID_STREAM, format="hls", rtsp_transport="tcp")  # Ensure stable TCP transport
+        .output('pipe:', format='wav', acodec='pcm_s16le', ac=1, ar=sample_rate)
+        .global_args('-re')  # Read input in real-time to match playback speed
+        .global_args('-fflags', 'nobuffer')  # Reduce latency
+        .global_args('-flags', 'low_delay')  # Enable low latency mode
+        .global_args('-probesize', '100M')  # Increase probe size to detect audio faster
+        .global_args('-analyzeduration', '100M')  # Extend analysis duration
+        .global_args('-loglevel', 'error')  # Minimize logging unless there's an error
+        .run_async(pipe_stdout=True, pipe_stderr=subprocess.PIPE)
+    )
+
     start_time = None
 
     while True:
-        audio_data, _ = stream.read(int(sample_rate * 0.5))  # Read 0.5 seconds of data
-        volume = np.max(np.abs(audio_data))
+        # ✅ Read raw audio data
+        raw_audio = process.stdout.read(4096)  # Read 4096 bytes of audio
+        if not raw_audio:
+            print("⚠️ No audio data received. Retrying...")
+            time.sleep(1)
+            continue
+
+        # ✅ Convert to NumPy array for volume analysis
+        audio_data = np.frombuffer(raw_audio, dtype=np.int16)
+        volume = np.max(np.abs(audio_data)) / 32768.0  # Normalize to range 0-1
+
+        print(f"🔊 Detected volume level: {volume:.2f}")  # Debugging
 
         if volume > threshold:
             if start_time is None:
                 start_time = time.time()
             elif time.time() - start_time >= duration:
-                print("🔊 Adhaan detected! Playing livestream...")
-                stream.stop()
+                print("🔊 Adhaan detected in livestream! Playing video...")
+                process.terminate()
                 return True
         else:
-            start_time = None
+            start_time = None  # Reset detection timer if volume drops
 
         time.sleep(0.5)
+
+    # ✅ Ensure the FFmpeg process is terminated on exit
+    process.terminate()
+    return False
 
 def play_livestream():
     """Plays both video & audio from the livestream using FFmpeg."""
@@ -101,7 +132,7 @@ def check_prayer_time(prayer_times):
                     print("🔇 Stopping livestream...")
                     livestream_process.terminate()
                 
-                time.sleep(300)  # Prevent immediate re-trigger for 5 minutes
+                time.sleep(180)  # Prevent immediate re-trigger for 5 minutes
 
         time.sleep(30)  # Check every 30 seconds
 
