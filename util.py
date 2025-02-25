@@ -8,6 +8,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from seleniumwire import webdriver
+from selenium.webdriver.chrome.options import Options
 
 
 # ✅ Load Configuration from YAML
@@ -19,10 +21,8 @@ def load_config():
 CONFIG = load_config()
 
 # ✅ Set up logging
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.getLogger('seleniumwire').setLevel(logging.WARNING)
+
 
 # ✅ Config Variables
 CITY = CONFIG["settings"]["city"]
@@ -33,6 +33,27 @@ AUTO_UNMUTE = CONFIG["livestream"]["auto_unmute"]
 BROWSER = CONFIG["livestream"]["browser"]
 WAIT_TIME = CONFIG["livestream"]["wait_time"]
 
+
+def get_m3u8_url(page_url):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    driver = webdriver.Chrome(options=chrome_options)
+    try:
+        driver.get(page_url)
+
+        # Let the page load and start streaming
+        time.sleep(10)  # adjust as needed
+
+        # Now check the requests
+        for request in driver.requests:
+            if request.response and ".m3u8" in request.url:
+                print("Found M3U8 request URL:\n", request.url)
+                return request.url
+
+        print("No .m3u8 URL found on this page.")
+        return None
+    finally:
+        driver.quit()
 
 def get_prayer_times():
     """
