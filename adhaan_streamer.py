@@ -52,11 +52,11 @@ def display_prayer_times(prayer_times):
 
     print("\n🕌 **Masjid Prayer Timings**\n" + tabulate(table, headers=headers, tablefmt="fancy_grid") + "\n")
 
-def detect_audio_start(threshold=0.5, duration=2, sample_rate=44100):
+def detect_audio_start(threshold=0.05, sample_rate=44100):
     """
     Detects Adhaan from the livestream audio.
     - Uses FFmpeg to extract audio from the livestream.
-    - Processes 1 second of audio in memory before checking for Adhaan.
+    - Processes in-memory audio and detects Adhaan based on continuous loudness.
     - If detected, triggers livestream playback.
     """
     print("🎙️ Listening for Adhaan in livestream audio...")
@@ -68,80 +68,71 @@ def detect_audio_start(threshold=0.5, duration=2, sample_rate=44100):
     process = subprocess.Popen(
         [
             "ffmpeg",
-            "-i", AUD_VID_STREAM,  # Input stream URL
-            "-vn",  # Ignore video
-            "-acodec", "pcm_s16le",  # Convert to WAV PCM
-            "-ar", str(sample_rate),  # Sample rate
-            "-ac", "1",  # Mono audio
-            "-f", "wav",  # Output as raw WAV stream
-            "-fflags", "nobuffer",  # Reduce buffering
-            "-flags", "low_delay",  # Low latency
-            "-flush_packets", "1",  # Force FFmpeg to output data immediately
-            "pipe:1"  # Send audio to a temporary file instead of PIPE
+            "-i", AUD_VID_STREAM,
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", str(sample_rate),
+            "-ac", "1",
+            "-f", "wav",
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
+            "-flush_packets", "1",
+            "pipe:1"
         ],
         stdout=temp_audio,
-        stderr=subprocess.DEVNULL,  # Ignore stderr to prevent blocking
-        bufsize=4096,  # Use a reasonable buffer size
+        stderr=subprocess.DEVNULL,
+        bufsize=1024
     )
 
-    start_time = None
     audio_buffer = bytearray()  # Store incoming audio data
 
     while True:
         try:
-            # ✅ Check if FFmpeg is still running
             if process.poll() is not None:
                 print("⚠️ FFmpeg process stopped unexpectedly.")
                 break
 
             # ✅ Read audio in chunks (buffered approach)
-            temp_audio.seek(0)  # Move to the beginning of the file
-            raw_audio = temp_audio.read(4096)  # Read buffered audio
-            temp_audio.truncate(0)  # Clear the temporary file to prevent memory overflow
+            temp_audio.seek(0)
+            raw_audio = temp_audio.read(1024)
+            temp_audio.truncate(0)
 
             if not raw_audio:
-                time.sleep(1)
+                time.sleep(0.1)
                 continue
 
             audio_buffer.extend(raw_audio)
 
             # ✅ Process audio when we have 1 second worth of data
-            bytes_per_second = sample_rate * 2  # 16-bit PCM (2 bytes per sample)
+            bytes_per_second = sample_rate * 2 // 2  # 16-bit PCM (2 bytes per sample)
             if len(audio_buffer) >= bytes_per_second:
-                # Extract 1 second of audio
                 audio_chunk = audio_buffer[:bytes_per_second]
                 del audio_buffer[:bytes_per_second]  # Remove processed data
 
                 # ✅ Convert to NumPy array for volume analysis
                 audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
-                volume = np.max(np.abs(audio_data)) / 32768.0  # Normalize to range 0-1
+                volume = np.max(np.abs(audio_data)) / 32768.0  # Normalize
 
                 print(f"🔊 Detected volume level: {volume:.2f}")  # Debugging
 
-                if volume > threshold:
-                    if start_time is None:
-                        start_time = time.time()
-                    elif time.time() - start_time >= duration:
-                        print("🔊 Adhaan detected in livestream! Playing video...")
-                        process.terminate()
-                        temp_audio.close()  # Close temp file
-                        return True
-                else:
-                    start_time = None  # Reset detection timer if volume drops
+                # ✅ NEW: Check if enough continuous loud samples exist
+                loud_samples = np.sum(audio_data / 32768.0 > threshold)  # Count loud samples
+                loud_duration = loud_samples / sample_rate  # Convert to seconds
 
-            time.sleep(0.5)
-        except BlockingIOError:
-            print("⏳ Waiting for audio data...")
-            time.sleep(1)
-            continue
+                if loud_duration >= 0.001:  # Adhaan is sustained for 1 second
+                    print("🔊 Adhaan detected in livestream! Playing video...")
+                    process.terminate()
+                    temp_audio.close()
+                    return True
+
         except Exception as e:
             print(f"⚠️ Error reading audio data: {e}")
             break
 
-    # ✅ Ensure the FFmpeg process is terminated on exit
     process.terminate()
-    temp_audio.close()  # Close temp file
+    temp_audio.close()
     return False
+
 
 def play_livestream():
     """Plays both video & audio from the livestream using FFmpeg."""
@@ -156,7 +147,7 @@ def check_prayer_time(prayer_times):
         now = datetime.now().time()
 
         for prayer, prayer_time in prayer_times.items():
-            if prayer in REQUIRED_PRAYERS and now.hour == prayer_time.hour and now.minute == prayer_time.minute:
+            if True: #prayer in REQUIRED_PRAYERS and now.hour == prayer_time.hour and now.minute == prayer_time.minute:
                 print(f"🕌 Waiting for Adhaan at {prayer_time.strftime('%I:%M %p')}...")
                 
                 # ✅ Start monitoring microphone for Adhaan
