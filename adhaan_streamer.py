@@ -81,7 +81,7 @@ def detect_audio_start(threshold=0.05, sample_rate=44100):
         ],
         stdout=temp_audio,
         stderr=subprocess.DEVNULL,
-        bufsize=1024
+        bufsize=4096
     )
 
     audio_buffer = bytearray()  # Store incoming audio data
@@ -94,11 +94,10 @@ def detect_audio_start(threshold=0.05, sample_rate=44100):
 
             # ✅ Read audio in chunks (buffered approach)
             temp_audio.seek(0)
-            raw_audio = temp_audio.read(1024)
+            raw_audio = temp_audio.read(4096)
             temp_audio.truncate(0)
 
             if not raw_audio:
-                time.sleep(0.1)
                 continue
 
             audio_buffer.extend(raw_audio)
