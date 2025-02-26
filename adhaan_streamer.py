@@ -146,7 +146,7 @@ def check_prayer_time(prayer_times):
         now = datetime.now().time()
 
         for prayer, prayer_time in prayer_times.items():
-            if True: #prayer in REQUIRED_PRAYERS and now.hour == prayer_time.hour and now.minute == prayer_time.minute:
+            if prayer in REQUIRED_PRAYERS and now.hour == prayer_time.hour and now.minute == prayer_time.minute:
                 print(f"🕌 Waiting for Adhaan at {prayer_time.strftime('%I:%M %p')}...")
                 
                 # ✅ Start monitoring microphone for Adhaan
