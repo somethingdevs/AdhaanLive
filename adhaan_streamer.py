@@ -12,6 +12,7 @@ import select
 import os
 import sys
 import tempfile
+import threading
 
 # ✅ Livestream URL (replace with your updated tokenized URL)
 LIVESTREAM_URL = "https://iaccplano.click2stream.com/"
@@ -27,6 +28,18 @@ FFMPEG_CMD = [
     "-i", AUD_VID_STREAM,
     "-loglevel", "quiet"  # Suppresses unnecessary logs
 ]
+
+def refresh_stream_url():
+    """Refreshes the stream URL every 10 minutes to avoid expiration."""
+    global AUD_VID_STREAM
+    while True:
+        time.sleep(600)  # Refresh every 10 minutes
+
+        new_url = get_m3u8_url(LIVESTREAM_URL)
+        if new_url:
+                AUD_VID_STREAM = new_url
+                print("🔄 Stream URL refreshed in background!")
+
 
 def display_prayer_times(prayer_times):
     """Displays all prayer times, separating Adhaan prayers from other times."""
@@ -220,9 +233,35 @@ def detect_audio_end(threshold=0.05, sample_rate=44100, required_silence=7):
 
 def play_livestream():
     """Plays both video & audio from the livestream using FFmpeg."""
-    print("🎥 Streaming Adhaan (Video + Audio)...")
-    process = subprocess.Popen(FFMPEG_CMD)
-    return process  # Return process so we can terminate it later
+    global AUD_VID_STREAM # Make sure we are using the global variable
+
+    if not AUD_VID_STREAM:
+         print("⚠️ Error: Stream URL (AUD_VID_STREAM) is not set. Cannot play.")
+         return None # Indicate failure
+
+    # Construct the command dynamically using the CURRENT URL
+    current_ffmpeg_cmd = [
+        "ffplay",
+        "-i", AUD_VID_STREAM, # Uses the latest URL value
+        "-vn",
+        "-loglevel", "error", # Changed to 'error' to see potential playback issues
+        "-autoexit"          # Added: ffplay closes when stream ends/errors
+        # "-nodisp"          # Optional: Uncomment for audio only
+    ]
+
+    print(f"🎥 Streaming Adhaan (Video + Audio) using URL: {AUD_VID_STREAM}")
+    print(f"Running command: {' '.join(current_ffmpeg_cmd)}") # See the command being used
+
+    try:
+        # Use the dynamically created command list
+        process = subprocess.Popen(current_ffmpeg_cmd)
+        return process  # Return process so we can terminate it later
+    except FileNotFoundError:
+         print("❌ Error: 'ffplay' command not found. Make sure FFmpeg is installed and in your PATH.")
+         return None
+    except Exception as e:
+         print(f"❌ Error starting ffplay: {e}")
+         return None
 
 
 def check_prayer_time(prayer_times):
@@ -241,7 +280,6 @@ def check_prayer_time(prayer_times):
                 if detect_audio_start():
                     # 2) Play Livestream
                     livestream_process = play_livestream()
-
                     # 3) Detect Adhaan End
                     ended = detect_audio_end()
                     if ended:
@@ -257,6 +295,8 @@ def check_prayer_time(prayer_times):
 if __name__ == "__main__":
     print("📢 Adhaan notifier running... Fetching prayer times.")
     prayer_times = get_prayer_times()
+
+    threading.Thread(target=refresh_stream_url, daemon=True).start()
 
     if prayer_times:
         display_prayer_times(prayer_times)
