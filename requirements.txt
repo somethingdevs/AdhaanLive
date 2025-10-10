@@ -1,4 +1,9 @@
-selenium
-requests
+numpy
+sounddevice
+pyaudio
 tabulate
-webbrowser
+ffmpeg-python
+pyyaml
+requests
+selenium
+selenium-wire
