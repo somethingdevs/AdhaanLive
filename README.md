@@ -54,7 +54,7 @@ git clone https://github.com/<your-username>/adhaan-streamer.git
 cd adhaan-streamer
 ```
 
-2️⃣ Create and activate a Conda environment
+### 2️⃣ Create and activate a Conda environment
 
 ```bash
 conda env create -f environment.yml
@@ -63,7 +63,7 @@ conda activate adhaan_streamer
 
 (If you prefer pip, you can also run pip install -r requirements.txt.)
 
-3️⃣ Verify installation
+### 3️⃣ Verify installation
 
 Run this command to make sure everything is installed correctly:
 
@@ -83,13 +83,13 @@ python adhaan_streamer.py
 
 The program will:
 
-Fetch today’s prayer times
+- Fetch today’s prayer times
 
-Display them in a table
+- Display them in a table
 
-Continuously listen for Adhaan start
+- Continuously listen for Adhaan start
 
-Automatically play the livestream when detected
+- Automatically play the livestream when detected
 
 Example console output:
 
