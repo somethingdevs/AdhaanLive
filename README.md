@@ -55,6 +55,7 @@ cd adhaan-streamer
 ```
 
 2️⃣ Create and activate a Conda environment
+
 ```bash
 conda env create -f environment.yml
 conda activate adhaan_streamer
@@ -65,16 +66,17 @@ conda activate adhaan_streamer
 3️⃣ Verify installation
 
 Run this command to make sure everything is installed correctly:
+
 ```bash
 python -m sounddevice
 ```
-
 
 You should see a list of available audio devices.
 
 ## ▶️ Usage
 
 Run the main script:
+
 ```bash
 python adhaan_streamer.py
 ```
@@ -91,16 +93,19 @@ Automatically play the livestream when detected
 
 Example console output:
 
+```bash
 🎙️ Listening for Adhaan in livestream audio...
 🔊 Adhaan detected in livestream! Playing video...
 🔇 Adhaan ended. Stopping livestream.
+```
 
-⚡ Configuration
+## ⚡ Configuration
 
 You can update the livestream URL or location by modifying this in your code:
 
+```python
 LIVESTREAM_URL = "https://iaccplano.click2stream.com/"
-
+```
 
 Or extend util.py to:
 
@@ -111,112 +116,109 @@ Use alternative prayer time APIs
 Store API keys or tokens securely
 
 ## 📁 Project Structure
+
+```bash
 adhaan_streamer/
 │
-├── adhaan_streamer.py     # Main application logic
-├── util.py                # Helper functions (API calls, URL refresh, etc.)
-├── environment.yml        # Conda environment file
-├── requirements.txt       # Pip dependencies (optional)
-├── README.md              # Documentation
-└── .gitignore             # Ignore build and cache files
+├── adhaan_streamer.py # Main application logic
+├── util.py # Helper functions (API calls, URL refresh, etc.)
+├── environment.yml # Conda environment file
+├── requirements.txt # Pip dependencies (optional)
+├── README.md # Documentation
+└── .gitignore # Ignore build and cache files
+```
 
 ## 🧱 Future Roadmap
 
-✅ Phase 1: CLI version (local streaming)
-
-🧭 Phase 2: REST API backend (FastAPI) for public access
-
-💻 Phase 3: Web UI (Streamlit dashboard) for setup & status
-
-☁️ Phase 4: Cloud-hosted Adhaan aggregator (multi-masjid support)
-
-🕋 Phase 5: Integration with IoT devices / smart speakers
+- ✅ **Phase 1:** CLI version (local streaming)
+- 🧭 **Phase 2:** REST API backend (FastAPI) for public access
+- 💻 **Phase 3:** Web UI (Streamlit dashboard) for setup & status
+- ☁️ **Phase 4:** Cloud-hosted Adhaan aggregator (multi-masjid support)
+- 🕋 **Phase 5:** Integration with IoT devices / smart speakers
 
 ## 🤝 Contributing
 
 We welcome contributions from the community!
 
-Fork the repo
-
-Create a new branch (feature/new-feature)
-
-Commit your changes
-
-Push to your branch and open a pull request
+1. Fork the repository
+2. Create a new branch (`feature/new-feature`)
+3. Commit your changes
+4. Push to your branch and open a pull request
 
 Please test your changes locally before submitting.
 
+
+---
+
 ## 🧾 License
 
-This project is licensed under the MIT License — feel free to use, modify, and distribute it.
+This project is licensed under the **MIT License** — feel free to use, modify, and distribute it.
+
+---
 
 ## 💬 Acknowledgements
 
-Click2Stream / Angelcam for livestream access
+- **Click2Stream / Angelcam** for livestream access
+- **Aladhan API** for global prayer time data
+- **Community masjids** for inspiring this project
+- Everyone working to make Adhaan accessible to all 💚
 
-Aladhan API for global prayer time data
-
-Community masjids for inspiring this project
-
-Everyone working to make Adhaan accessible to all 💚
-
-"And who is better in speech than one who calls to Allah, does righteous deeds, and says, 'Indeed, I am of the Muslims.'" — Qur’an 41:33
-
+> _"And who is better in speech than one who calls to Allah, does righteous deeds, and says,  
+> 'Indeed, I am of the Muslims.'"_ — **Qur’an 41:33**
 
 ## 🚀 Quick Start Preview
 
 Here’s how the Adhaan Streamer works conceptually:
 
-                ┌────────────────────────────────────────┐
-                │          Mosque Livestream             │
-                │ (e.g., Click2Stream / Angelcam / YT)   │
-                └────────────────────────────────────────┘
-                                │
-                                ▼
-                  ┌────────────────────────┐
-                  │  Stream URL Fetcher     │
-                  │ (auto-refresh tokenized)│
-                  └────────────────────────┘
-                                │
-                                ▼
-              ┌──────────────────────────────────┐
-              │    Audio Detection Engine        │
-              │  - monitors sound intensity      │
-              │  - detects Adhaan start & end    │
-              └──────────────────────────────────┘
-                                │
-                                ▼
-          ┌─────────────────────────────────────┐
-          │     Player (FFmpeg + FFplay)        │
-          │ Streams live video + audio to home  │
-          └─────────────────────────────────────┘
-                                │
-                                ▼
-             ┌─────────────────────────────────┐
-             │  Logs + Notifications (Planned) │
-             │  e.g., mobile alerts / webhooks │
-             └─────────────────────────────────┘
+```bash
+            ┌────────────────────────────────────────┐
+            │          Mosque Livestream             │
+            │ (e.g., Click2Stream / Angelcam / YT)   │
+            └────────────────────────────────────────┘
+                            │
+                            ▼
+              ┌────────────────────────┐
+              │  Stream URL Fetcher     │
+              │ (auto-refresh tokenized)│
+              └────────────────────────┘
+                            │
+                            ▼
+          ┌──────────────────────────────────┐
+          │    Audio Detection Engine        │
+          │  - monitors sound intensity      │
+          │  - detects Adhaan start & end    │
+          └──────────────────────────────────┘
+                            │
+                            ▼
+      ┌─────────────────────────────────────┐
+      │     Player (FFmpeg + FFplay)        │
+      │ Streams live video + audio to home  │
+      └─────────────────────────────────────┘
+                            │
+                            ▼
+         ┌─────────────────────────────────┐
+         │  Logs + Notifications (Planned) │
+         │  e.g., mobile alerts / webhooks │
+         └─────────────────────────────────┘
+```
 
-🧭 Typical Workflow
+### 🧭 Typical Workflow
 
-util.py fetches prayer times via API.
+1. `util.py` fetches prayer times via API.
+2. Main script listens for Adhaan near each prayer time.
+3. When Adhaan starts → plays the livestream automatically.
+4. When silence is detected → stops playback.
+5. Stream URL refreshes every 10 minutes to avoid expiry.
 
-Main script listens for Adhaan near each prayer time.
+---
 
-When Adhaan starts → plays the livestream automatically.
+### 🌐 Future Integration Ideas
 
-When silence detected → stops playback.
+- REST API for remote access (`/play_adhaan`, `/get_prayer_times`)
+- Streamlit or React dashboard for live status
+- Integration with **Angelcam**, **Click2Stream**, and **YouTube Live** APIs
+- Smart home integration (Google Home, Alexa, etc.)
 
-Stream URL refreshes every 10 minutes to avoid expiry.
-
-🌐 Future Integration Ideas
-
-REST API for remote access (/play_adhaan, /get_prayer_times)
-
-Streamlit or React dashboard for live status
-
-Integration with Angelcam, Click2Stream, and YouTube Live APIs
-
-Smart home integration (Google Home, Alexa, etc.)
+---
 
 ## 🧡 Built for communities, masjids, and families who want to hear the Adhaan echo in every home.
