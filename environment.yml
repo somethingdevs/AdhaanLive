@@ -1,0 +1,17 @@
+name: adhaan_streamer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - numpy
+  - tabulate
+  - pyyaml
+  - requests
+  - pip
+  - pip:
+      - sounddevice
+      - pyaudio
+      - ffmpeg-python
+      - selenium
+      - selenium-wire
