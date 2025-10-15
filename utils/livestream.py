@@ -7,7 +7,6 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import warnings
 
 
 def get_m3u8_url(page_url: str) -> Optional[str]:
@@ -15,7 +14,7 @@ def get_m3u8_url(page_url: str) -> Optional[str]:
     Faster extractor that filters only Angelcam .m3u8 requests.
     Expected runtime: 3–5 seconds max.
     """
-    warnings.filterwarnings("ignore", message="pkg_resources is deprecated", category=UserWarning)
+
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
