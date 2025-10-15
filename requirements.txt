@@ -7,3 +7,4 @@ pyyaml
 requests
 selenium
 selenium-wire
+soundfile
