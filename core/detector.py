@@ -14,13 +14,25 @@ import logging
 import threading
 import time
 import os
+import wave
 from typing import Optional
+from collections import deque
 from utils.adhaan_logger import log_event
 
 # === Global shared state ===
-AMBIENT_STATE = {"rms": 0.0003, "running": False}
+AMBIENT_STATE = {"rms": 0.0003, "db": -70.0, "peak": 0.0, "timestamp": None, "running": False}
+_AMBIENT_LOCK = threading.Lock()
 AUDIO_LOG_DIR = os.path.join("assets", "audio_logs")
 os.makedirs(AUDIO_LOG_DIR, exist_ok=True)
+
+
+def save_wav(snippet_path, audio_bytes, sample_rate=44100):
+    """Properly wrap raw PCM data in a WAV container."""
+    with wave.open(snippet_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio_bytes)
 
 
 # === AMBIENT MONITOR ===
@@ -49,10 +61,17 @@ def _ambient_monitor_loop(stream_url: str, sample_rate: int = 44100):
                 peak = np.max(np.abs(audio_data)) / 32768.0
                 db = 20 * np.log10(rms + 1e-8)
 
-                AMBIENT_STATE["rms"] = rms
+                with _AMBIENT_LOCK:
+                    AMBIENT_STATE.update({
+                        "rms": rms,
+                        "db": db,
+                        "peak": peak,
+                        "timestamp": time.time(),
+                    })
+
                 logging.info(f"🎚️ Ambient RMS: {rms:.4f} | {db:.1f} dB | Peak: {peak:.4f}")
 
-            time.sleep(10)  # wait before next sample
+            time.sleep(10)
 
         except Exception as e:
             logging.warning(f"⚠️ Ambient monitor error: {e}")
@@ -75,12 +94,23 @@ def stop_ambient_monitor():
     AMBIENT_STATE["running"] = False
 
 
+def get_ambient_snapshot() -> dict:
+    """
+    Returns the latest ambient RMS/peak/db snapshot for display or monitoring.
+    Safe to call from any thread.
+    """
+    with _AMBIENT_LOCK:
+        return dict(AMBIENT_STATE)
+
+
 # === START DETECTION ===
 def detect_audio_start(threshold: float = 0.05,
                        sample_rate: int = 44100,
                        stream_url: Optional[str] = None,
-                       min_duration_above_threshold: float = 2.0) -> bool:
-    """Detects Adhaan START after sustained volume for 2 s, auto-adjusting threshold."""
+                       min_duration_above_threshold: float = 2.0,
+                       pre_buffer_secs: int = 5,
+                       post_buffer_secs: int = 5) -> bool:
+    """Detects Adhaan START with sustained volume, saving ±5 s snippet."""
     logging.info("🎙️ Listening for Adhaan START in livestream audio...")
 
     ambient_rms = AMBIENT_STATE.get("rms", 0.0003)
@@ -93,53 +123,51 @@ def detect_audio_start(threshold: float = 0.05,
         "-ar", str(sample_rate), "-ac", "1",
         "-f", "wav", "pipe:1",
     ]
-
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096)
-    audio_buffer = bytearray()
-    consecutive_high = 0.0
     bytes_per_second = sample_rate * 2
+    buffer = deque(maxlen=pre_buffer_secs)
+    consecutive_high = 0.0
 
     try:
         while True:
-            raw_audio = process.stdout.read(4096)
+            raw_audio = process.stdout.read(bytes_per_second)
             if not raw_audio:
                 if process.poll() is not None:
                     logging.warning("⚠️ FFmpeg stopped (start detection).")
                     break
                 continue
 
-            audio_buffer.extend(raw_audio)
-            if len(audio_buffer) >= bytes_per_second:
-                audio_chunk = audio_buffer[:bytes_per_second]
-                del audio_buffer[:bytes_per_second]
-                audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
-                rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
-                peak = np.max(np.abs(audio_data)) / 32768.0
-                db = 20 * np.log10(rms + 1e-8)
+            buffer.append(raw_audio)
+            audio_data = np.frombuffer(raw_audio, dtype=np.int16)
+            rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
+            db = 20 * np.log10(rms + 1e-8)
 
-                if rms > effective_threshold:
-                    consecutive_high += 1.0
-                    logging.debug(
-                        f"🔊 RMS={rms:.4f} | Peak={peak:.4f} | {db:.1f} dB | ↑ {consecutive_high:.1f}s > threshold")
-                else:
-                    consecutive_high = max(0.0, consecutive_high - 0.5)
+            if rms > effective_threshold:
+                consecutive_high += 1.0
+            else:
+                consecutive_high = max(0.0, consecutive_high - 0.5)
 
-                if consecutive_high >= min_duration_above_threshold:
-                    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-                    snippet_path = os.path.join(AUDIO_LOG_DIR, f"adhaan_candidate_{timestamp}.wav")
-                    with open(snippet_path, "wb") as f:
-                        f.write(audio_chunk)
-                    log_event("start", snippet_path, rms, db)
-                    logging.info(f"✅ Adhaan START confirmed after {consecutive_high:.1f}s sustained volume")
-                    logging.info(f"🎧 Saved snippet → {snippet_path}")
-                    process.terminate()
-                    return True
+            if consecutive_high >= min_duration_above_threshold:
+                post_bytes = bytearray()
+                for _ in range(post_buffer_secs):
+                    chunk = process.stdout.read(bytes_per_second)
+                    if not chunk:
+                        break
+                    post_bytes.extend(chunk)
+
+                snippet_path = os.path.join(AUDIO_LOG_DIR, f"adhaan_candidate_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav")
+                full_audio = b"".join(buffer) + post_bytes
+                save_wav(snippet_path, full_audio, sample_rate)
+                log_event("start", snippet_path, rms, db)
+                logging.info(f"✅ Adhaan START confirmed after {consecutive_high:.1f}s sustained volume")
+                logging.info(f"🎧 Saved ±5 s snippet → {snippet_path}")
+                process.terminate()
+                return True
 
     except Exception as e:
         logging.exception(f"Error in start detection: {e}")
     finally:
         process.terminate()
-
     return False
 
 
@@ -147,8 +175,10 @@ def detect_audio_start(threshold: float = 0.05,
 def detect_audio_end(threshold: float = 0.05,
                      sample_rate: int = 44100,
                      required_silence: int = 7,
-                     stream_url: Optional[str] = None) -> bool:
-    """Detects when Adhaan ends based on sustained silence."""
+                     stream_url: Optional[str] = None,
+                     pre_buffer_secs: int = 5,
+                     post_buffer_secs: int = 5) -> bool:
+    """Detects Adhaan END via sustained silence, saving ±5 s snippet."""
     logging.info("🎧 Listening for Adhaan END in livestream audio...")
 
     cmd = [
@@ -157,50 +187,51 @@ def detect_audio_end(threshold: float = 0.05,
         "-ar", str(sample_rate), "-ac", "1",
         "-f", "wav", "pipe:1",
     ]
-
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096)
-    audio_buffer = bytearray()
-    silence_counter = 0
     bytes_per_second = sample_rate * 2
+    buffer = deque(maxlen=pre_buffer_secs)
+    silence_counter = 0
 
     try:
         while True:
-            raw_audio = process.stdout.read(4096)
+            raw_audio = process.stdout.read(bytes_per_second)
             if not raw_audio:
                 if process.poll() is not None:
                     logging.warning("⚠️ FFmpeg stopped (end detection).")
                     break
                 continue
 
-            audio_buffer.extend(raw_audio)
-            if len(audio_buffer) >= bytes_per_second:
-                audio_chunk = audio_buffer[:bytes_per_second]
-                del audio_buffer[:bytes_per_second]
-                audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
-                rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
-                db = 20 * np.log10(rms + 1e-8)
+            buffer.append(raw_audio)
+            audio_data = np.frombuffer(raw_audio, dtype=np.int16)
+            rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
+            db = 20 * np.log10(rms + 1e-8)
 
-                if rms < threshold:
-                    silence_counter += 1
-                else:
-                    silence_counter = 0
+            if rms < threshold:
+                silence_counter += 1
+            else:
+                silence_counter = 0
 
-                if silence_counter >= required_silence:
-                    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-                    snippet_path = os.path.join(AUDIO_LOG_DIR, f"adhaan_candidate_{timestamp}.wav")
-                    with open(snippet_path, "wb") as f:
-                        f.write(audio_chunk)
-                    log_event("end", snippet_path, rms, db)
-                    logging.info(f"🔇 Sustained silence detected — Adhaan END.")
-                    logging.info(f"🎧 Saved snippet → {snippet_path}")
-                    process.terminate()
-                    return True
+            if silence_counter >= required_silence:
+                post_bytes = bytearray()
+                for _ in range(post_buffer_secs):
+                    chunk = process.stdout.read(bytes_per_second)
+                    if not chunk:
+                        break
+                    post_bytes.extend(chunk)
+
+                snippet_path = os.path.join(AUDIO_LOG_DIR, f"adhaan_candidate_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav")
+                full_audio = b"".join(buffer) + post_bytes
+                save_wav(snippet_path, full_audio, sample_rate)
+                log_event("end", snippet_path, rms, db)
+                logging.info("🔇 Sustained silence detected — Adhaan END.")
+                logging.info(f"🎧 Saved ±5 s snippet → {snippet_path}")
+                process.terminate()
+                return True
 
     except Exception as e:
         logging.exception(f"Error in end detection: {e}")
     finally:
         process.terminate()
-
     return False
 
 

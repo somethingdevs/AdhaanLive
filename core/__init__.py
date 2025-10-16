@@ -11,6 +11,7 @@ from .detector import (
 from .player import play_livestream, stop_livestream
 from .scheduler import check_prayer_time
 from .streamer import start_streamer
+from .playback import start_buffered_playback, stop_buffered_playback
 
 __all__ = [
     "detect_audio_start",
@@ -23,4 +24,6 @@ __all__ = [
     "stop_livestream",
     "check_prayer_time",
     "start_streamer",
+    "start_buffered_playback",
+    "stop_buffered_playback",
 ]
