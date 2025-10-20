@@ -23,7 +23,6 @@ CONFIG = load_config()
 # ✅ Set up logging
 logging.getLogger('seleniumwire').setLevel(logging.WARNING)
 
-
 # ✅ Config Variables
 CITY = CONFIG["settings"]["city"]
 COUNTRY = CONFIG["settings"]["country"]
@@ -33,27 +32,57 @@ AUTO_UNMUTE = CONFIG["livestream"]["auto_unmute"]
 BROWSER = CONFIG["livestream"]["browser"]
 WAIT_TIME = CONFIG["livestream"]["wait_time"]
 
+from typing import Optional
 
-def get_m3u8_url(page_url):
+
+def get_m3u8_url(page_url: str) -> Optional[str]:
+    """
+    Opens the livestream page and captures the first .m3u8 URL request.
+    Uses selenium-wire to intercept network requests, supports Chrome or Brave.
+    Returns the valid .m3u8 link if found, otherwise None.
+    """
+
+    logging.info(f"🌍 Launching browser to capture livestream requests for: {page_url}")
+
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--log-level=3")
+
+    # Choose browser based on config
+    if BROWSER.lower() == "brave":
+        chrome_options.binary_location = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+
     driver = webdriver.Chrome(options=chrome_options)
+
     try:
         driver.get(page_url)
+        logging.info("⏳ Waiting for livestream to load and network requests to start...")
 
-        # Let the page load and start streaming
-        time.sleep(10)  # adjust as needed
+        # Wait longer than before for stream initialization
+        time.sleep(WAIT_TIME + 5)
 
-        # Now check the requests
+        m3u8_url = None
         for request in driver.requests:
             if request.response and ".m3u8" in request.url:
-                print("Found M3U8 request URL:\n", request.url)
-                return request.url
+                m3u8_url = request.url
+                break
 
-        print("No .m3u8 URL found on this page.")
+        if m3u8_url:
+            logging.info(f"✅ Found M3U8 URL: {m3u8_url}")
+            return m3u8_url
+        else:
+            logging.warning("⚠️ No M3U8 URL found. The stream may not have started yet.")
+            return None
+
+    except Exception as e:
+        logging.exception(f"❌ Error while fetching M3U8 URL: {e}")
         return None
     finally:
         driver.quit()
+
 
 def get_prayer_times():
     """

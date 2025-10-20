@@ -1,0 +1,9 @@
+[MASTER]
+ignore=venv,env,__pycache__
+extension-pkg-whitelist=numpy
+
+[FORMAT]
+max-line-length=100
+
+[MESSAGES CONTROL]
+disable=missing-module-docstring,missing-class-docstring
