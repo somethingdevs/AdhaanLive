@@ -2,12 +2,12 @@ import threading
 import logging
 import time
 import os
-from typing import Optional
 
 # === Imports ===
 from core.stream_refresher import smart_refresh_loop, CACHE_PATH
 from utils.livestream import get_new_url_func
 
+# Detection + ambient monitor (with playback and snapshot support)
 from core.detector import (
     start_audio_detection,
     stop_audio_detection,
@@ -19,10 +19,10 @@ from core.playback import (
     stop_buffered_playback,
 )
 
-# Optional: if your detector exposes a getter for the latest ambient stats
+# Optional: if detector exposes a getter for the latest ambient stats
 try:
-    from core.detector import get_ambient_snapshot  # returns dict or None
-except Exception:  # keep running even if not present
+    from core.detector import get_ambient_snapshot  # returns dict
+except Exception:
     get_ambient_snapshot = None
 
 # === Logging setup ===
@@ -31,11 +31,12 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-# === Global control & status flags ===
+# === Global control & flags ===
 stop_flag = threading.Event()
 detection_active_flag = threading.Event()
 ambient_active_flag = threading.Event()
 playback_active_flag = threading.Event()
+watchdog_status = {"last_restart": None, "last_action": "OK"}
 
 
 def _read_cached_url() -> str:
@@ -48,64 +49,55 @@ def _read_cached_url() -> str:
     return ""
 
 
-def _volume_bar(db: Optional[float], width: int = 12) -> str:
-    """
-    Tiny ASCII volume meter based on dB (0 dB = full, -60 dB = empty).
-    If db is None, returns blanks.
-    """
+def _volume_bar(db: float or None, width: int = 12) -> str:
+    """Tiny ASCII bar based on dB."""
     if db is None:
         return "[" + (" " * width) + "]"
-    # clamp to [-60, 0] dB
     db = max(min(db, 0.0), -60.0)
-    # map to 0..width
     filled = int(round((db + 60.0) / 60.0 * width))
     return "[" + ("#" * filled) + (" " * (width - filled)) + "]"
 
 
 def heartbeat_status(poll_interval: int = 60):
-    """
-    Periodically logs system health + visual volume meter.
-    Includes live ▲▼ trend indicators from ambient snapshot.
-    """
+    """Periodic system heartbeat with volume and watchdog state."""
     last_db = None
 
     while not stop_flag.is_set():
         try:
             url = _read_cached_url()
             url_short = (url[:90] + "…") if len(url) > 100 else url
-            last_mtime = os.path.getmtime(CACHE_PATH) if os.path.exists(CACHE_PATH) else None
-            last_mtime_str = time.strftime("%H:%M:%S", time.localtime(last_mtime)) if last_mtime else "N/A"
+            mtime = os.path.getmtime(CACHE_PATH) if os.path.exists(CACHE_PATH) else None
+            mtime_str = time.strftime("%H:%M:%S", time.localtime(mtime)) if mtime else "N/A"
 
             db, peak, trend_symbol = None, None, "·"
-
             if callable(get_ambient_snapshot):
                 snap = get_ambient_snapshot()
                 if snap:
                     db = snap.get("db")
                     peak = snap.get("peak")
-
-                    # simple trend calc vs last db
-                    if last_db is not None and db is not None:
+                    if last_db is not None:
                         if db > last_db + 0.5:
                             trend_symbol = "▲"
                         elif db < last_db - 0.5:
                             trend_symbol = "▼"
                     last_db = db
 
-            # tiny visual bar
             bar = _volume_bar(db)
             db_str = f"{db:.1f} dB" if db is not None else "N/A"
             peak_str = f"{peak:.3f}" if peak is not None else "N/A"
+            wd_str = f"{watchdog_status['last_action']} @ {watchdog_status['last_restart']}" if watchdog_status[
+                "last_restart"] else "OK"
 
             logging.info(
-                "💓 Heartbeat | detect=%s | ambient=%s | playback=%s | %s %s | peak=%s | cache=%s | url=%s",
+                "💓 Heartbeat | detect=%s | ambient=%s | playback=%s | wd=%s | %s %s | peak=%s | cache=%s | url=%s",
                 detection_active_flag.is_set(),
                 ambient_active_flag.is_set(),
                 playback_active_flag.is_set(),
+                wd_str,
                 bar,
                 trend_symbol + " " + db_str,
                 peak_str,
-                last_mtime_str,
+                mtime_str,
                 url_short if url_short else "N/A",
             )
 
@@ -116,40 +108,29 @@ def heartbeat_status(poll_interval: int = 60):
 
 
 def monitor_stream_updates(poll_interval: int = 5):
-    """
-    Watches the current_stream.txt file for changes and triggers
-    ambient monitor + detection + playback when a new stream URL is written.
-    """
+    """Watches cache file and restarts components on stream URL changes."""
     logging.info("👁️  Starting stream watcher...")
+    last_mtime, last_url = None, None
 
-    last_mtime = None
-    last_url = None
-
-    # 🆕 Auto-start pipeline if a valid cached URL exists
     cached_url = _read_cached_url()
     if cached_url:
         try:
             logging.info("🚀 Auto-starting ambient + detection + playback with cached URL...")
-            # Start in safe order: ambient → detection → playback
             start_ambient_monitor(cached_url)
             ambient_active_flag.set()
-
-            time.sleep(0.5)  # tiny spacing to avoid FFmpeg races
+            time.sleep(0.5)
 
             start_audio_detection(cached_url)
             detection_active_flag.set()
-
             time.sleep(0.5)
 
             start_buffered_playback(cached_url)
             playback_active_flag.set()
-
             last_url = cached_url
             last_mtime = os.path.getmtime(CACHE_PATH)
         except Exception as e:
             logging.warning(f"⚠️ Could not auto-start from cache: {e}")
 
-    # 🌀 Continuous watcher loop
     while not stop_flag.is_set():
         try:
             if os.path.exists(CACHE_PATH):
@@ -157,54 +138,107 @@ def monitor_stream_updates(poll_interval: int = 5):
                 if last_mtime is None or mtime != last_mtime:
                     with open(CACHE_PATH, "r") as f:
                         new_url = f.read().strip()
-
                     if new_url and new_url != last_url:
                         logging.info("🔄 Stream URL changed — restarting ambient + detection + playback...")
+                        stop_audio_detection();
+                        detection_active_flag.clear()
+                        stop_ambient_monitor();
+                        ambient_active_flag.clear()
+                        stop_buffered_playback();
+                        playback_active_flag.clear()
+                        time.sleep(1.0)
 
-                        # Stop in safe order: detection → playback → ambient
-                        try:
-                            stop_audio_detection()
-                        finally:
-                            detection_active_flag.clear()
-
-                        try:
-                            stop_buffered_playback()
-                        finally:
-                            playback_active_flag.clear()
-
-                        try:
-                            stop_ambient_monitor()
-                        finally:
-                            ambient_active_flag.clear()
-
-                        time.sleep(1.0)  # spacing to ensure old FFmpeg is fully down
-
-                        # Start in safe order: ambient → detection → playback
-                        start_ambient_monitor(new_url)
+                        start_ambient_monitor(new_url);
                         ambient_active_flag.set()
-
                         time.sleep(0.5)
-
-                        start_audio_detection(new_url)
+                        start_audio_detection(new_url);
                         detection_active_flag.set()
-
                         time.sleep(0.5)
-
-                        start_buffered_playback(new_url)
+                        start_buffered_playback(new_url);
                         playback_active_flag.set()
-
                         last_url = new_url
-
                     last_mtime = mtime
-
             time.sleep(poll_interval)
-
         except KeyboardInterrupt:
             logging.info("🛑 Stream watcher stopped manually.")
             break
         except Exception as e:
             logging.exception(f"❌ Error in stream watcher: {e}")
             time.sleep(5)
+
+
+def watchdog_monitor(poll_interval: int = 30, startup_grace: int = 10):
+    """
+    Smart, state-aware watchdog that checks thread health and restarts components if idle.
+    Waits a short grace period after startup before the first scan.
+    """
+    # logging.info("🕐 Watchdog initial grace period active...")
+    # time.sleep(startup_grace)
+    logging.info("🧩 Smart Watchdog started.")
+    while not stop_flag.is_set():
+        try:
+            url = _read_cached_url()
+            if not url:
+                time.sleep(poll_interval)
+                continue
+
+            # --- Ambient monitor check ---
+            try:
+                snap = get_ambient_snapshot() if callable(get_ambient_snapshot) else None
+                last_update_age = (time.time() - snap["timestamp"]) if snap and snap.get("timestamp") else None
+            except Exception:
+                last_update_age = None
+
+            if not ambient_active_flag.is_set() or (last_update_age and last_update_age > 45):
+                logging.warning("⚠️ Watchdog: Ambient monitor inactive/stale, restarting...")
+                try:
+                    stop_ambient_monitor()
+                    start_ambient_monitor(url)
+                    ambient_active_flag.set()
+                    watchdog_status.update(
+                        {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Ambient Restart"})
+                    logging.info("🧩 Watchdog: Ambient monitor restarted.")
+                except Exception as e:
+                    logging.error(f"❌ Watchdog failed to restart ambient: {e}")
+            else:
+                logging.debug("🧠 Watchdog: Ambient monitor healthy.")
+
+            # --- Detection thread check ---
+            from core.detector import _detection_in_progress
+            if not detection_active_flag.is_set():
+                if _detection_in_progress.is_set():
+                    logging.info("🧠 Watchdog: Detection already in progress — skipping restart.")
+                else:
+                    logging.warning("⚠️ Watchdog: Detection idle, restarting...")
+                    try:
+                        start_audio_detection(url)
+                        detection_active_flag.set()
+                        watchdog_status.update(
+                            {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Detection Restart"})
+                        logging.info("🧩 Watchdog: Detection restarted.")
+                    except Exception as e:
+                        logging.error(f"❌ Watchdog failed to restart detection: {e}")
+            else:
+                logging.debug("🧠 Watchdog: Detection healthy.")
+
+            # --- Playback thread check ---
+            if not playback_active_flag.is_set():
+                logging.warning("⚠️ Watchdog: Playback inactive, restarting...")
+                try:
+                    start_buffered_playback(url)
+                    playback_active_flag.set()
+                    watchdog_status.update(
+                        {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Playback Restart"})
+                    logging.info("🧩 Watchdog: Playback restarted.")
+                except Exception as e:
+                    logging.error(f"❌ Watchdog failed to restart playback: {e}")
+            else:
+                logging.debug("🧠 Watchdog: Playback healthy.")
+
+        except Exception as e:
+            logging.exception(f"❌ Watchdog general error: {e}")
+        finally:
+            time.sleep(poll_interval)
 
 
 def run_stream_refresher():
@@ -218,19 +252,18 @@ def run_stream_refresher():
 def main():
     logging.info("🚀 Starting Adhaan Live System...")
 
-    # Start refresher thread (updates stream URL periodically)
     refresher_thread = threading.Thread(target=run_stream_refresher, daemon=True)
     refresher_thread.start()
 
-    # Start watcher thread (triggers ambient + detection + playback)
     watcher_thread = threading.Thread(target=monitor_stream_updates, daemon=True)
     watcher_thread.start()
 
-    # Start heartbeat thread (status every minute)
     heartbeat_thread = threading.Thread(target=heartbeat_status, daemon=True)
     heartbeat_thread.start()
 
-    # Keep main thread alive
+    watchdog_thread = threading.Thread(target=watchdog_monitor, daemon=True)
+    watchdog_thread.start()
+
     try:
         while True:
             time.sleep(1)
@@ -238,27 +271,19 @@ def main():
         logging.info("🛑 Shutting down gracefully...")
         stop_flag.set()
 
-        # Stop pipeline in safe order: detection → playback → ambient
-        try:
-            stop_audio_detection()
-        finally:
-            detection_active_flag.clear()
+        # stop in safe order
+        stop_audio_detection();
+        detection_active_flag.clear()
+        stop_ambient_monitor();
+        ambient_active_flag.clear()
+        stop_buffered_playback();
+        playback_active_flag.clear()
 
-        try:
-            stop_buffered_playback()
-        finally:
-            playback_active_flag.clear()
-
-        try:
-            stop_ambient_monitor()
-        finally:
-            ambient_active_flag.clear()
-
-        # Join threads
+        # join threads
         refresher_thread.join(timeout=3)
         watcher_thread.join(timeout=3)
         heartbeat_thread.join(timeout=3)
-
+        watchdog_thread.join(timeout=3)
         logging.info("✅ All threads stopped cleanly.")
 
 

@@ -1,14 +1,16 @@
-import time
 import base64
 import json
-import urllib.parse
+import time
 import logging
-from typing import Callable, Optional
 import os
+import urllib
+from datetime import datetime, timedelta
+from typing import Optional
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_PATH = os.path.join(BASE_DIR, "..", "assets", "current_stream.txt")
-CACHE_PATH = os.path.normpath(CACHE_PATH)
+from utils.livestream import get_new_url_func
+from core.detector import is_adhaan_active  # requires mark_adhaan_active() in detector
+
+CACHE_PATH = os.path.join("assets", "current_stream.txt")
 
 
 def decode_expiry_from_token(token_url: str) -> Optional[int]:
@@ -24,78 +26,112 @@ def decode_expiry_from_token(token_url: str) -> Optional[int]:
         return None
 
 
-def read_cached_url() -> Optional[str]:
-    """Reads the cached stream URL if it exists."""
-    if not os.path.exists(CACHE_PATH):
-        return None
+def _read_cached_url():
     try:
-        with open(CACHE_PATH, "r") as f:
-            url = f.read().strip()
-            return url if url else None
+        if os.path.exists(CACHE_PATH):
+            with open(CACHE_PATH, "r") as f:
+                return f.read().strip()
     except Exception:
-        return None
+        pass
+    return ""
 
 
-def smart_refresh_loop(get_new_url_func: Callable[[], str]) -> None:
+def _write_cached_url(url: str):
+    """Safely writes the new stream URL to cache file."""
+    try:
+        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        with open(CACHE_PATH, "w") as f:
+            f.write(url)
+        logging.info(f"💾 Saved new stream URL to {CACHE_PATH}")
+    except Exception as e:
+        logging.error(f"❌ Failed to write new stream URL: {e}")
+
+
+def smart_refresh_loop(get_new_url_func):
     """
-    Refreshes the livestream URL only when needed.
-    - Checks cache on startup.
-    - Reuses valid URL until expiry.
-    - Refreshes 2 minutes before expiry.
+    Smart refresher that prefetches Angelcam URLs early (10 min before expiry)
+    but defers activating them if Adhaan is in progress.
     """
+
+    PREFETCH_WINDOW = 600  # 10 min before expiry
+    SWAP_CUTOFF = 30  # Force swap 30s before expiry
+    REFRESH_INTERVAL = 60  # Main loop sleep
+
     logging.info("🚀 Starting Smart Stream Refresher...")
+
+    cached_url = _read_cached_url()
+    expiry_time = None
+    next_url = None
+    prefetch_done = False
+
+    # 🩵 NEW: ensure we start with a valid URL if none exists
+    if not cached_url:
+        logging.info("🌐 No cached stream URL found — fetching initial one...")
+        try:
+            new_url = get_new_url_func()
+            if isinstance(new_url, tuple):
+                new_url = new_url[0]
+            _write_cached_url(new_url)
+            cached_url = new_url
+            expiry_time = datetime.utcnow() + timedelta(hours=2)
+            logging.info("✅ Initial stream URL fetched and cached successfully.")
+        except Exception as e:
+            logging.error(f"❌ Failed to fetch initial stream URL: {e}")
+            time.sleep(30)  # retry soon
+            return smart_refresh_loop(get_new_url_func)
 
     while True:
         try:
-            url = read_cached_url()
+            now = datetime.utcnow()
 
-            if url:
-                exp = decode_expiry_from_token(url)
-                now = int(time.time())
-                if exp and exp > now + 180:  # still valid for at least 3 minutes
-                    expiry_time = time.strftime("%H:%M:%S", time.localtime(exp))
-                    logging.info(f"✅ Using cached stream URL (valid until {expiry_time})")
-                    sleep_for = max(0, (exp - now) - 120)
-                    logging.info(f"💤 Sleeping {sleep_for / 60:.1f} min before next refresh.")
-                    time.sleep(sleep_for)
-                    logging.info("🔄 Refreshing token soon...")
+            # Fallback: assume 2h token validity if unknown
+            if not expiry_time:
+                expiry_time = now + timedelta(hours=2)
+
+            time_left = (expiry_time - now).total_seconds()
+
+            # --- Step 1: Prefetch Early ---
+            if time_left < PREFETCH_WINDOW and not prefetch_done:
+                logging.info("🕐 Prefetching new stream URL early (token near expiry)...")
+                try:
+                    next_url = get_new_url_func()
+                    prefetch_done = True
+                    logging.info("✅ Prefetched next URL successfully (holding until safe swap).")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to prefetch new URL early: {e}")
+
+            # --- Step 2: Swap Logic ---
+            if prefetch_done and next_url:
+                if not is_adhaan_active():
+                    logging.info("🔄 Activating prefetched URL (Adhaan idle)...")
+                    _write_cached_url(next_url)
+                    cached_url = next_url
+                    expiry_time = now + timedelta(hours=2)
+                    prefetch_done = False
+                    next_url = None
+                elif time_left < SWAP_CUTOFF:
+                    logging.warning("⏳ Token near expiry but Adhaan active — forcing swap to avoid drop.")
+                    _write_cached_url(next_url)
+                    cached_url = next_url
+                    expiry_time = now + timedelta(hours=2)
+                    prefetch_done = False
+                    next_url = None
                 else:
-                    logging.info("⚠️ Cached token expired or invalid. Fetching new URL...")
-                    url = get_new_url_func()
-            else:
-                logging.info("📂 No cached stream URL found. Fetching new one...")
-                url = get_new_url_func()
+                    logging.info("🕊️ Holding prefetched URL — Adhaan still active.")
 
-            if not url:
-                logging.warning("⚠️ Could not retrieve a new stream URL. Retrying in 10 minutes...")
-                time.sleep(600)
-                continue
+            # --- Step 3: Emergency Refresh ---
+            elif time_left <= 0:
+                logging.warning("⚠️ Token expired unexpectedly — fetching new URL now.")
+                try:
+                    new_url = get_new_url_func()
+                    _write_cached_url(new_url)
+                    cached_url = new_url
+                    expiry_time = now + timedelta(hours=2)
+                except Exception as e:
+                    logging.error(f"❌ Failed to refresh URL after expiry: {e}")
 
-            # 💾 Save the fresh URL
-            os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-            with open(CACHE_PATH, "w") as f:
-                f.write(url)
-            logging.info(f"💾 Saved new stream URL to {CACHE_PATH}")
+            time.sleep(REFRESH_INTERVAL)
 
-            # 🧠 Decode expiry and sleep
-            exp = decode_expiry_from_token(url)
-            if not exp:
-                logging.warning("⚠️ Couldn’t decode expiry; defaulting to 2 hours.")
-                time.sleep(7200)
-                continue
-
-            now = int(time.time())
-            sleep_for = max(0, (exp - now) - 120)
-            expiry_time = time.strftime("%H:%M:%S", time.localtime(exp))
-            logging.info(f"🕒 Token valid until {expiry_time} — sleeping for {sleep_for / 60:.1f} min")
-
-            time.sleep(sleep_for)
-            logging.info("🔄 Token expiring soon, refreshing now...")
-
-        except KeyboardInterrupt:
-            logging.info("🛑 Stream refresher stopped manually.")
-            break
         except Exception as e:
-            logging.exception(f"❌ Unexpected error in stream refresher: {e}")
-            logging.info("Retrying in 5 minutes...")
-            time.sleep(300)
+            logging.exception(f"❌ Smart refresher crashed: {e}")
+            time.sleep(30)
