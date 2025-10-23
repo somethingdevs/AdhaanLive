@@ -1,6 +1,7 @@
 """
 Buffered live playback module.
 Streams the Adhaan livestream with a small delay (≈2 s) using FFmpeg and sounddevice.
+Now uses a persistent OutputStream to ensure continuous audible playback.
 """
 
 import subprocess
@@ -13,14 +14,32 @@ import time
 
 # === Configuration ===
 SAMPLE_RATE = 44100
-BUFFER_SECONDS = 2  # Playback delay
+BUFFER_SECONDS = 1  # Playback delay
 CHUNK_SIZE = 4096  # Bytes per read from FFmpeg
-PLAYBACK_LATENCY = 0.1  # Seconds per audio write
-CHANNELS = 1
+CHANNELS = 2
 
 # === Global thread controls ===
 _playback_thread = None
 _playback_stop = threading.Event()
+
+
+def reshape_audio_chunk(data: np.ndarray, channels: int) -> np.ndarray:
+    """
+    Takes a 1D int16 numpy array (raw PCM from FFmpeg) and returns a properly
+    shaped 2D array of shape (frames, channels).
+    If channels=1: returns (n,) or (n,1).
+    If channels=2: tries stereo reshape; if input mono, upmix to stereo.
+    """
+    if channels == 1:
+        return data  # writing mono directly works with stream
+
+    # Try to reshape to stereo (if originally stereo)
+    try:
+        return data.reshape(-1, channels)
+    except ValueError:
+        # Upmix mono -> stereo by repeating columns
+        mono = data.reshape(-1, 1)
+        return np.repeat(mono, channels, axis=1)
 
 
 def _playback_worker(stream_url: str):
@@ -36,33 +55,57 @@ def _playback_worker(stream_url: str):
     cmd = [
         "ffmpeg",
         "-i", stream_url,
-        "-vn", "-acodec", "pcm_s16le",
+        "-vn",
+        "-ac", str(CHANNELS),  # Force stereo here
+        "-acodec", "pcm_s16le",
         "-ar", str(SAMPLE_RATE),
-        "-ac", str(CHANNELS),
-        "-f", "s16le", "pipe:1",
+        "-f", "s16le",
+        "pipe:1",
         "-loglevel", "quiet",
     ]
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=CHUNK_SIZE * 4)
 
-    # --- Inner function: plays from queue ---
+    # === Persistent OutputStream setup ===
+    try:
+        stream = sd.OutputStream(
+            samplerate=SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype='int16',
+            blocksize=CHUNK_SIZE // (2 * CHANNELS),
+        )
+        stream.start()
+        logging.info("🔈 Audio OutputStream started successfully.")
+    except Exception as e:
+        logging.exception(f"❌ Failed to initialize OutputStream: {e}")
+        process.terminate()
+        return
+
+    # --- Inner function: plays from queue continuously ---
     def playback_loop():
-        logging.info("🔈 Playback thread ready (low-latency buffer active).")
         while not _playback_stop.is_set():
             try:
                 chunk = buffer_q.get(timeout=1)
-                if chunk:
-                    # Convert raw bytes → NumPy array
-                    audio_data = np.frombuffer(chunk, dtype=np.int16)
-                    sd.play(audio_data, samplerate=SAMPLE_RATE, blocking=True)
+                if not chunk:
+                    continue
+
+                # Convert raw bytes → NumPy array (interleaved if stereo)
+                data = np.frombuffer(chunk, dtype=np.int16)
+                frames = reshape_audio_chunk(data, CHANNELS)
+                stream.write(frames)
+
             except queue.Empty:
                 continue
             except Exception as e:
                 logging.warning(f"⚠️ Playback error: {e}")
-                time.sleep(0.5)
+                time.sleep(0.2)
 
-        sd.stop()
-        logging.info("🔇 Playback thread stopped cleanly.")
+        logging.info("🔇 Playback loop exiting; stopping OutputStream.")
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
 
     # Start playback thread
     player = threading.Thread(target=playback_loop, daemon=True)
@@ -77,7 +120,7 @@ def _playback_worker(stream_url: str):
                     break
                 continue
 
-            # Drop oldest if buffer full (ensures rolling 2 s delay)
+            # Drop oldest if buffer full (ensures rolling delay)
             if buffer_q.full():
                 _ = buffer_q.get_nowait()
             buffer_q.put_nowait(chunk)
@@ -88,7 +131,11 @@ def _playback_worker(stream_url: str):
         process.terminate()
         _playback_stop.set()
         player.join(timeout=3)
-        sd.stop()
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
         logging.info("🛑 Buffered playback fully stopped.")
 
 

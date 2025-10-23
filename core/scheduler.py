@@ -5,7 +5,7 @@ Schedules prayer checks and triggers Adhaan detection.
 import time
 import logging
 from datetime import datetime
-from core.detector import detect_audio_start, detect_audio_end
+from core.detector import start_audio_detection, stop_audio_detection
 from core.player import play_livestream, stop_livestream
 
 
@@ -21,9 +21,9 @@ def check_prayer_time(prayer_times: dict, stream_url: str) -> None:
             if prayer in required_prayers and now.hour == prayer_time.hour and now.minute == prayer_time.minute:
                 logging.info(f"🕌 Detected {prayer} time ({prayer_time.strftime('%I:%M %p')}).")
 
-                if detect_audio_start():
+                if start_audio_detection():
                     process = play_livestream(stream_url)
-                    if detect_audio_end():
+                    if stop_audio_detection():
                         stop_livestream(process)
 
                 time.sleep(300)  # Avoid retriggering
