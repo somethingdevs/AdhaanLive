@@ -1,6 +1,6 @@
-# 🕌 Adhaan Streamer
+# 🕌 Adhaan Live
 
-**Adhaan Streamer** is an open-source Python application that detects and streams the **live Adhaan (call to prayer)**
+**Adhaan Live** is an open-source Python application that detects and streams the **live Adhaan (call to prayer)**
 from mosque livestreams directly to homes or connected speakers.  
 The goal is to build a community-driven platform where masjids can easily expose their Adhaan livestream via a simple
 API, and users can experience it automatically at prayer times.
@@ -50,15 +50,15 @@ systems.
 ### 1️⃣ Clone this repository
 
 ```bash
-git clone https://github.com/<your-username>/adhaan-streamer.git
-cd adhaan-streamer
+git clone https://github.com/somethingdevs/AdhaanLive
+cd AdhaanLive
 ```
 
 ### 2️⃣ Create and activate a Conda environment
 
 ```bash
 conda env create -f environment.yml
-conda activate adhaan_streamer
+conda activate AdhaanLive
 ```
 
 (If you prefer pip, you can also run pip install -r requirements.txt.)
@@ -118,7 +118,7 @@ Store API keys or tokens securely
 ## 📁 Project Structure
 
 ```bash
-adhaan_streamer/
+AdhaanLive/
 │
 ├── adhaan_streamer.py # Main application logic
 ├── util.py # Helper functions (API calls, URL refresh, etc.)
