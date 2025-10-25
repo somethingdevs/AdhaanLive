@@ -6,12 +6,10 @@ from .detector import (
     start_ambient_monitor,
     stop_ambient_monitor,
     get_ambient_snapshot,
+)
 
-)
-from .playback import (
-    start_buffered_playback,
-    stop_buffered_playback,
-)
+from .playback import PlaybackManager
+
 from .stream_refresher import smart_refresh_loop, CACHE_PATH
 
 __all__ = [
@@ -20,8 +18,7 @@ __all__ = [
     "start_ambient_monitor",
     "stop_ambient_monitor",
     "get_ambient_snapshot",
-    "start_buffered_playback",
-    "stop_buffered_playback",
+    "PlaybackManager",
     "smart_refresh_loop",
     "CACHE_PATH",
 ]

@@ -1,160 +1,184 @@
 """
-Buffered live playback module.
-Streams the Adhaan livestream with a small delay (≈2 s) using FFmpeg and sounddevice.
-Now uses a persistent OutputStream to ensure continuous audible playback.
+Playback manager using ffplay with sane lifecycle + retries.
+
+- Starts ffplay as a subprocess
+- Tracks process health and current URL
+- Retries on crash (max_retries, retry_delay)
+- Only restarts when the URL actually changes or the process dies
 """
 
+from __future__ import annotations
 import subprocess
 import threading
-import queue
-import numpy as np
-import logging
-import sounddevice as sd
 import time
-
-# === Configuration ===
-SAMPLE_RATE = 44100
-BUFFER_SECONDS = 1  # Playback delay
-CHUNK_SIZE = 4096  # Bytes per read from FFmpeg
-CHANNELS = 2
-
-# === Global thread controls ===
-_playback_thread = None
-_playback_stop = threading.Event()
+import logging
+from typing import Optional
 
 
-def reshape_audio_chunk(data: np.ndarray, channels: int) -> np.ndarray:
-    """
-    Takes a 1D int16 numpy array (raw PCM from FFmpeg) and returns a properly
-    shaped 2D array of shape (frames, channels).
-    If channels=1: returns (n,) or (n,1).
-    If channels=2: tries stereo reshape; if input mono, upmix to stereo.
-    """
-    if channels == 1:
-        return data  # writing mono directly works with stream
+class PlaybackManager:
+    def __init__(
+            self,
+            ffplay_path: str = "ffplay",
+            base_args: Optional[list[str]] = None,
+            max_retries: int = 3,
+            retry_delay_sec: float = 5.0,
+    ):
+        self.ffplay_path = ffplay_path
+        self.base_args = base_args or ["-nodisp", "-autoexit", "-loglevel", "error"]
+        self.max_retries = max_retries
+        self.retry_delay_sec = retry_delay_sec
 
-    # Try to reshape to stereo (if originally stereo)
-    try:
-        return data.reshape(-1, channels)
-    except ValueError:
-        # Upmix mono -> stereo by repeating columns
-        mono = data.reshape(-1, 1)
-        return np.repeat(mono, channels, axis=1)
+        self._proc: Optional[subprocess.Popen] = None
+        self._lock = threading.RLock()
+        self._runner_thread: Optional[threading.Thread] = None
+        self._stop_flag = threading.Event()
+        self._current_url: Optional[str] = None
+        self._retries = 0
 
+    # ------------ public API ------------
+    def start(self, url: str) -> None:
+        """Start playback for URL if not already running on the same URL."""
+        with self._lock:
+            # If running on same URL, keep it
+            if self._proc and self._proc.poll() is None and self._current_url == url:
+                logging.debug("Playback already active on same URL; skipping start.")
+                return
 
-def _playback_worker(stream_url: str):
-    """Continuously read from FFmpeg and play through speakers with a rolling buffer."""
-    global _playback_stop
+            # If running on different URL, stop first
+            if self._proc and self._proc.poll() is None and self._current_url != url:
+                logging.info("Stopping playback to switch URL...")
+                self._stop_proc_locked()
 
-    logging.info(f"🎧 Starting buffered live playback for: {stream_url}")
+            # Reset control state
+            self._stop_flag.clear()
+            self._current_url = url
+            self._retries = 0
 
-    # Thread-safe audio queue: holds about 2 s of audio
-    buffer_q = queue.Queue(maxsize=int((SAMPLE_RATE * 2 * BUFFER_SECONDS) / CHUNK_SIZE))
+            # Launch runner thread (detached control loop)
+            if self._runner_thread and self._runner_thread.is_alive():
+                # Should not happen, but ensure a clean one
+                logging.debug("Old playback runner still alive; asking it to stop.")
+                self._stop_flag.set()
+                self._runner_thread.join(timeout=2)
 
-    # FFmpeg: output 16-bit mono PCM
-    cmd = [
-        "ffmpeg",
-        "-i", stream_url,
-        "-vn",
-        "-ac", str(CHANNELS),  # Force stereo here
-        "-acodec", "pcm_s16le",
-        "-ar", str(SAMPLE_RATE),
-        "-f", "s16le",
-        "pipe:1",
-        "-loglevel", "quiet",
-    ]
+            self._runner_thread = threading.Thread(
+                target=self._run_loop, name="PlaybackRunner", daemon=True
+            )
+            self._runner_thread.start()
+            logging.info("ffplay-based playback started in background.")
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=CHUNK_SIZE * 4)
+    def stop(self) -> None:
+        """Stop playback and terminate process cleanly."""
+        with self._lock:
+            self._stop_flag.set()
+            self._stop_proc_locked()
 
-    # === Persistent OutputStream setup ===
-    try:
-        stream = sd.OutputStream(
-            samplerate=SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype='int16',
-            blocksize=CHUNK_SIZE // (2 * CHANNELS),
+        # join thread outside lock
+        if self._runner_thread and self._runner_thread.is_alive():
+            self._runner_thread.join(timeout=5)
+        self._runner_thread = None
+        logging.info("Direct playback thread stopped.")
+
+    def restart(self, url: Optional[str] = None) -> None:
+        """Force a restart (optionally with a new URL)."""
+        with self._lock:
+            if url is not None and url != self._current_url:
+                self._current_url = url
+            self._stop_flag.set()
+            self._stop_proc_locked()
+
+        if self._runner_thread and self._runner_thread.is_alive():
+            self._runner_thread.join(timeout=5)
+
+        self._stop_flag.clear()
+        self._retries = 0
+        self._runner_thread = threading.Thread(
+            target=self._run_loop, name="PlaybackRunner", daemon=True
         )
-        stream.start()
-        logging.info("🔈 Audio OutputStream started successfully.")
-    except Exception as e:
-        logging.exception(f"❌ Failed to initialize OutputStream: {e}")
-        process.terminate()
-        return
+        self._runner_thread.start()
+        logging.info("ffplay-based playback restarted in background.")
 
-    # --- Inner function: plays from queue continuously ---
-    def playback_loop():
-        while not _playback_stop.is_set():
+    def is_alive(self) -> bool:
+        with self._lock:
+            return bool(self._proc and self._proc.poll() is None)
+
+    def current_url(self) -> Optional[str]:
+        with self._lock:
+            return self._current_url
+
+    # ------------ internals ------------
+    def _run_loop(self) -> None:
+        """Owns the ffplay process; retries if it exits unexpectedly."""
+        while not self._stop_flag.is_set():
+            url = self.current_url()
+            if not url:
+                logging.warning("No URL set for playback; waiting...")
+                time.sleep(1.0)
+                continue
+
+            args = [self.ffplay_path, *self.base_args, "-i", url]
             try:
-                chunk = buffer_q.get(timeout=1)
-                if not chunk:
-                    continue
+                with self._lock:
+                    # Spawn ffplay
+                    logging.info(f"Using ffplay for direct playback: {url}")
+                    self._proc = subprocess.Popen(args)
 
-                # Convert raw bytes → NumPy array (interleaved if stereo)
-                data = np.frombuffer(chunk, dtype=np.int16)
-                frames = reshape_audio_chunk(data, CHANNELS)
-                stream.write(frames)
-
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logging.warning(f"⚠️ Playback error: {e}")
-                time.sleep(0.2)
-
-        logging.info("🔇 Playback loop exiting; stopping OutputStream.")
-        try:
-            stream.stop()
-            stream.close()
-        except Exception:
-            pass
-
-    # Start playback thread
-    player = threading.Thread(target=playback_loop, daemon=True)
-    player.start()
-
-    try:
-        while not _playback_stop.is_set():
-            chunk = process.stdout.read(CHUNK_SIZE)
-            if not chunk:
-                if process.poll() is not None:
-                    logging.warning("⚠️ FFmpeg ended — playback stopped.")
+                # Wait for process to exit or stop requested
+                while not self._stop_flag.is_set():
+                    with self._lock:
+                        proc = self._proc
+                    if not proc:
+                        break
+                    rc = proc.poll()
+                    if rc is None:
+                        time.sleep(0.5)
+                        continue
+                    # Process exited
+                    if rc == 0:
+                        logging.info("ffplay exited naturally.")
+                    else:
+                        logging.warning("ffplay exited unexpectedly.")
                     break
-                continue
 
-            # Drop oldest if buffer full (ensures rolling delay)
-            if buffer_q.full():
-                _ = buffer_q.get_nowait()
-            buffer_q.put_nowait(chunk)
+            except FileNotFoundError:
+                logging.error("ffplay not found. Ensure FFmpeg is installed and in PATH.")
+                break
+            except Exception as e:
+                logging.exception(f"Error launching/monitoring ffplay: {e}")
 
-    except Exception as e:
-        logging.exception(f"❌ Error in playback worker: {e}")
-    finally:
-        process.terminate()
-        _playback_stop.set()
-        player.join(timeout=3)
-        try:
-            stream.stop()
-            stream.close()
-        except Exception:
-            pass
-        logging.info("🛑 Buffered playback fully stopped.")
+            # Cleanup after exit
+            with self._lock:
+                self._stop_proc_locked()
 
+            if self._stop_flag.is_set():
+                break
 
-def start_buffered_playback(stream_url: str):
-    """Launches background playback thread."""
-    global _playback_thread, _playback_stop
-    stop_buffered_playback()  # ensure single instance
-    _playback_stop.clear()
+            # Retry policy for unexpected exit
+            self._retries += 1
+            if self._retries > self.max_retries:
+                logging.error("Playback failed too many times; giving up until URL changes.")
+                break
 
-    _playback_thread = threading.Thread(target=_playback_worker, args=(stream_url,), daemon=True)
-    _playback_thread.start()
-    logging.info("🎙️ Buffered playback started in background.")
+            logging.info(
+                f"Retrying playback in {self.retry_delay_sec:.0f}s (attempt {self._retries}/{self.max_retries})...")
+            time.sleep(self.retry_delay_sec)
 
+        # Final cleanup
+        with self._lock:
+            self._stop_proc_locked()
 
-def stop_buffered_playback():
-    """Stops live playback if active."""
-    global _playback_thread, _playback_stop
-    if _playback_thread and _playback_thread.is_alive():
-        logging.info("🧹 Stopping buffered playback thread...")
-        _playback_stop.set()
-        _playback_thread.join(timeout=5)
-    _playback_thread = None
+    def _stop_proc_locked(self) -> None:
+        """Terminate current ffplay process (requires self._lock held)."""
+        if self._proc:
+            try:
+                if self._proc.poll() is None:
+                    self._proc.terminate()
+                    try:
+                        self._proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self._proc.kill()
+                # Clear handle regardless
+            except Exception:
+                pass
+            finally:
+                self._proc = None

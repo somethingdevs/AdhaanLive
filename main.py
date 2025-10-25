@@ -7,16 +7,12 @@ import os
 from core.stream_refresher import smart_refresh_loop, CACHE_PATH
 from utils.livestream import get_new_url_func
 
-# Detection + ambient monitor (with playback and snapshot support)
+# Detection + ambient monitor (with snapshot support)
 from core.detector import (
     start_audio_detection,
     stop_audio_detection,
     start_ambient_monitor,
     stop_ambient_monitor,
-)
-from core.playback import (
-    start_buffered_playback,
-    stop_buffered_playback,
 )
 
 # Optional: if detector exposes a getter for the latest ambient stats
@@ -24,6 +20,9 @@ try:
     from core.detector import get_ambient_snapshot  # returns dict
 except Exception:
     get_ambient_snapshot = None
+
+# NEW: playback manager (ffplay-based)
+from core.playback import PlaybackManager
 
 # === Logging setup ===
 logging.basicConfig(
@@ -37,6 +36,9 @@ detection_active_flag = threading.Event()
 ambient_active_flag = threading.Event()
 playback_active_flag = threading.Event()
 watchdog_status = {"last_restart": None, "last_action": "OK"}
+
+# Single global playback controller
+PLAYBACK = PlaybackManager(max_retries=3, retry_delay_sec=5.0)
 
 
 def _read_cached_url() -> str:
@@ -75,7 +77,7 @@ def heartbeat_status(poll_interval: int = 60):
                 if snap:
                     db = snap.get("db")
                     peak = snap.get("peak")
-                    if last_db is not None:
+                    if last_db is not None and db is not None:
                         if db > last_db + 0.5:
                             trend_symbol = "▲"
                         elif db < last_db - 0.5:
@@ -85,8 +87,10 @@ def heartbeat_status(poll_interval: int = 60):
             bar = _volume_bar(db)
             db_str = f"{db:.1f} dB" if db is not None else "N/A"
             peak_str = f"{peak:.3f}" if peak is not None else "N/A"
-            wd_str = f"{watchdog_status['last_action']} @ {watchdog_status['last_restart']}" if watchdog_status[
-                "last_restart"] else "OK"
+            wd_str = (
+                f"{watchdog_status['last_action']} @ {watchdog_status['last_restart']}"
+                if watchdog_status["last_restart"] else "OK"
+            )
 
             logging.info(
                 "💓 Heartbeat | detect=%s | ambient=%s | playback=%s | wd=%s | %s %s | peak=%s | cache=%s | url=%s",
@@ -116,15 +120,13 @@ def monitor_stream_updates(poll_interval: int = 5):
     if cached_url:
         try:
             logging.info("🚀 Auto-starting ambient + detection + playback with cached URL...")
-            start_ambient_monitor(cached_url)
+            start_ambient_monitor(cached_url);
             ambient_active_flag.set()
             time.sleep(0.5)
-
-            start_audio_detection(cached_url)
+            start_audio_detection(cached_url);
             detection_active_flag.set()
             time.sleep(0.5)
-
-            start_buffered_playback(cached_url)
+            PLAYBACK.start(cached_url);
             playback_active_flag.set()
             last_url = cached_url
             last_mtime = os.path.getmtime(CACHE_PATH)
@@ -140,21 +142,22 @@ def monitor_stream_updates(poll_interval: int = 5):
                         new_url = f.read().strip()
                     if new_url and new_url != last_url:
                         logging.info("🔄 Stream URL changed — restarting ambient + detection + playback...")
+                        # Stop old
                         stop_audio_detection();
                         detection_active_flag.clear()
                         stop_ambient_monitor();
                         ambient_active_flag.clear()
-                        stop_buffered_playback();
+                        PLAYBACK.stop();
                         playback_active_flag.clear()
                         time.sleep(1.0)
-
+                        # Start new
                         start_ambient_monitor(new_url);
                         ambient_active_flag.set()
                         time.sleep(0.5)
                         start_audio_detection(new_url);
                         detection_active_flag.set()
                         time.sleep(0.5)
-                        start_buffered_playback(new_url);
+                        PLAYBACK.start(new_url);
                         playback_active_flag.set()
                         last_url = new_url
                     last_mtime = mtime
@@ -172,8 +175,6 @@ def watchdog_monitor(poll_interval: int = 30, startup_grace: int = 10):
     Smart, state-aware watchdog that checks thread health and restarts components if idle.
     Waits a short grace period after startup before the first scan.
     """
-    # logging.info("🕐 Watchdog initial grace period active...")
-    # time.sleep(startup_grace)
     logging.info("🧩 Smart Watchdog started.")
     while not stop_flag.is_set():
         try:
@@ -196,7 +197,8 @@ def watchdog_monitor(poll_interval: int = 30, startup_grace: int = 10):
                     start_ambient_monitor(url)
                     ambient_active_flag.set()
                     watchdog_status.update(
-                        {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Ambient Restart"})
+                        {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Ambient Restart"}
+                    )
                     logging.info("🧩 Watchdog: Ambient monitor restarted.")
                 except Exception as e:
                     logging.error(f"❌ Watchdog failed to restart ambient: {e}")
@@ -214,22 +216,25 @@ def watchdog_monitor(poll_interval: int = 30, startup_grace: int = 10):
                         start_audio_detection(url)
                         detection_active_flag.set()
                         watchdog_status.update(
-                            {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Detection Restart"})
+                            {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Detection Restart"}
+                        )
                         logging.info("🧩 Watchdog: Detection restarted.")
                     except Exception as e:
                         logging.error(f"❌ Watchdog failed to restart detection: {e}")
             else:
                 logging.debug("🧠 Watchdog: Detection healthy.")
 
-            # --- Playback thread check ---
-            if not playback_active_flag.is_set():
-                logging.warning("⚠️ Watchdog: Playback inactive, restarting...")
+            # --- Playback check (process-aware) ---
+            if not PLAYBACK.is_alive():
+                logging.warning("⚠️ Watchdog: Playback inactive, attempting restart...")
                 try:
-                    start_buffered_playback(url)
-                    playback_active_flag.set()
-                    watchdog_status.update(
-                        {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Playback Restart"})
-                    logging.info("🧩 Watchdog: Playback restarted.")
+                    if url:
+                        PLAYBACK.start(url)
+                        playback_active_flag.set()
+                        watchdog_status.update(
+                            {"last_restart": time.strftime("%H:%M:%S"), "last_action": "Playback Restart"}
+                        )
+                        logging.info("🧩 Watchdog: Playback restart attempted.")
                 except Exception as e:
                     logging.error(f"❌ Watchdog failed to restart playback: {e}")
             else:
@@ -276,7 +281,7 @@ def main():
         detection_active_flag.clear()
         stop_ambient_monitor();
         ambient_active_flag.clear()
-        stop_buffered_playback();
+        PLAYBACK.stop();
         playback_active_flag.clear()
 
         # join threads
