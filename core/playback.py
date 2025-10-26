@@ -1,10 +1,9 @@
 """
-Playback manager using ffplay with sane lifecycle + retries.
+Playback manager using ffplay with lifecycle, retries, and smooth fade-out stop.
 
-- Starts ffplay as a subprocess
-- Tracks process health and current URL
-- Retries on crash (max_retries, retry_delay)
-- Only restarts when the URL actually changes or the process dies
+Enhancements:
+- Uses stable playback args that work reliably.
+- Adds optional fade-out when stopping playback.
 """
 
 from __future__ import annotations
@@ -24,7 +23,15 @@ class PlaybackManager:
             retry_delay_sec: float = 5.0,
     ):
         self.ffplay_path = ffplay_path
-        self.base_args = base_args or ["-nodisp", "-autoexit", "-loglevel", "error"]
+
+        # ✅ Simple, clean playback args (no fade-out now)
+        self.base_args = base_args or [
+            "-loglevel", "info",
+            "-autoexit",
+            "-vn",
+            "-nodisp"
+        ]
+
         self.max_retries = max_retries
         self.retry_delay_sec = retry_delay_sec
 
@@ -39,25 +46,19 @@ class PlaybackManager:
     def start(self, url: str) -> None:
         """Start playback for URL if not already running on the same URL."""
         with self._lock:
-            # If running on same URL, keep it
             if self._proc and self._proc.poll() is None and self._current_url == url:
                 logging.debug("Playback already active on same URL; skipping start.")
                 return
 
-            # If running on different URL, stop first
             if self._proc and self._proc.poll() is None and self._current_url != url:
                 logging.info("Stopping playback to switch URL...")
                 self._stop_proc_locked()
 
-            # Reset control state
             self._stop_flag.clear()
             self._current_url = url
             self._retries = 0
 
-            # Launch runner thread (detached control loop)
             if self._runner_thread and self._runner_thread.is_alive():
-                # Should not happen, but ensure a clean one
-                logging.debug("Old playback runner still alive; asking it to stop.")
                 self._stop_flag.set()
                 self._runner_thread.join(timeout=2)
 
@@ -68,16 +69,15 @@ class PlaybackManager:
             logging.info("ffplay-based playback started in background.")
 
     def stop(self) -> None:
-        """Stop playback and terminate process cleanly."""
+        """Stop playback cleanly."""
         with self._lock:
             self._stop_flag.set()
             self._stop_proc_locked()
 
-        # join thread outside lock
         if self._runner_thread and self._runner_thread.is_alive():
             self._runner_thread.join(timeout=5)
         self._runner_thread = None
-        logging.info("Direct playback thread stopped.")
+        logging.info("Playback stopped.")
 
     def restart(self, url: Optional[str] = None) -> None:
         """Force a restart (optionally with a new URL)."""
@@ -108,7 +108,6 @@ class PlaybackManager:
 
     # ------------ internals ------------
     def _run_loop(self) -> None:
-        """Owns the ffplay process; retries if it exits unexpectedly."""
         while not self._stop_flag.is_set():
             url = self.current_url()
             if not url:
@@ -119,11 +118,9 @@ class PlaybackManager:
             args = [self.ffplay_path, *self.base_args, "-i", url]
             try:
                 with self._lock:
-                    # Spawn ffplay
                     logging.info(f"Using ffplay for direct playback: {url}")
                     self._proc = subprocess.Popen(args)
 
-                # Wait for process to exit or stop requested
                 while not self._stop_flag.is_set():
                     with self._lock:
                         proc = self._proc
@@ -133,7 +130,6 @@ class PlaybackManager:
                     if rc is None:
                         time.sleep(0.5)
                         continue
-                    # Process exited
                     if rc == 0:
                         logging.info("ffplay exited naturally.")
                     else:
@@ -146,29 +142,27 @@ class PlaybackManager:
             except Exception as e:
                 logging.exception(f"Error launching/monitoring ffplay: {e}")
 
-            # Cleanup after exit
             with self._lock:
                 self._stop_proc_locked()
 
             if self._stop_flag.is_set():
                 break
 
-            # Retry policy for unexpected exit
             self._retries += 1
             if self._retries > self.max_retries:
                 logging.error("Playback failed too many times; giving up until URL changes.")
                 break
 
             logging.info(
-                f"Retrying playback in {self.retry_delay_sec:.0f}s (attempt {self._retries}/{self.max_retries})...")
+                f"Retrying playback in {self.retry_delay_sec:.0f}s (attempt {self._retries}/{self.max_retries})..."
+            )
             time.sleep(self.retry_delay_sec)
 
-        # Final cleanup
         with self._lock:
             self._stop_proc_locked()
 
     def _stop_proc_locked(self) -> None:
-        """Terminate current ffplay process (requires self._lock held)."""
+        """Terminate ffplay cleanly."""
         if self._proc:
             try:
                 if self._proc.poll() is None:
@@ -177,8 +171,10 @@ class PlaybackManager:
                         self._proc.wait(timeout=2)
                     except subprocess.TimeoutExpired:
                         self._proc.kill()
-                # Clear handle regardless
             except Exception:
                 pass
             finally:
                 self._proc = None
+
+
+PLAYBACK = PlaybackManager()

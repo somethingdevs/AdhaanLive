@@ -15,6 +15,8 @@ from typing import Optional
 from collections import deque
 from utils.adhaan_logger import log_event
 
+from core.playback import PLAYBACK
+
 # === Global shared state ===
 AMBIENT_STATE = {"rms": 0.0003, "db": -70.0, "peak": 0.0, "timestamp": None, "running": False}
 _AMBIENT_LOCK = threading.Lock()
@@ -124,7 +126,6 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         _detection_in_progress.set()
         logging.info(f"🎧 Starting Adhaan detection for stream: {stream_url}")
 
-        # --- Setup ---
         bytes_per_second = sample_rate * 2
         ambient_rms = AMBIENT_STATE.get("rms", 0.0003)
         threshold = max(ambient_rms * 3, 0.05)
@@ -139,7 +140,6 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         ]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096)
 
-        # Buffers and state
         pre_buffer = deque(maxlen=5)
         recording = bytearray()
         adhaan_started = False
@@ -161,29 +161,29 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
             db = 20 * np.log10(rms + 1e-8)
 
             if not adhaan_started:
-                # waiting for loudness trigger
                 if rms > threshold:
                     consecutive_high += 1
                 else:
                     consecutive_high = max(0.0, consecutive_high - 0.5)
 
                 if consecutive_high >= 2.0:
-                    # === START DETECTED ===
                     adhaan_started = True
                     start_time = time.strftime("%H:%M:%S")
                     file_path = os.path.join(
                         AUDIO_LOG_DIR, f"adhaan_full_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav"
                     )
                     log_event("start", file_path, rms, db)
-                    mark_adhaan_active(True)  # 🕌 Mark Adhaan as active
+                    mark_adhaan_active(True)
+
+                    # ✅ START PLAYBACK using new manager
+                    PLAYBACK.start(stream_url)
+
                     logging.info(f"✅ Adhaan START confirmed at {start_time} | RMS={rms:.4f} | dB={db:.1f}")
-                    # include pre-buffer in recording
                     for chunk in pre_buffer:
                         recording.extend(chunk)
                     continue
 
             else:
-                # already started; record continuously
                 recording.extend(raw_audio)
                 if rms < silence_threshold:
                     silence_counter += 1
@@ -191,11 +191,14 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
                     silence_counter = 0
 
                 if silence_counter >= required_silence:
-                    # === END DETECTED ===
                     end_time = time.strftime("%H:%M:%S")
                     save_wav(file_path, recording, sample_rate)
                     log_event("end", file_path, rms, db)
-                    mark_adhaan_active(False)  # 🕌 Mark Adhaan as inactive
+                    mark_adhaan_active(False)
+
+                    # ✅ STOP PLAYBACK smoothly
+                    PLAYBACK.stop()
+
                     logging.info(
                         f"🏁 Adhaan END detected at {end_time} (duration={len(recording) / (bytes_per_second):.1f}s)"
                     )
@@ -207,12 +210,11 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         logging.exception(f"❌ Detection thread error: {e}")
     finally:
         _detection_in_progress.clear()
-        mark_adhaan_active(False)  # 🕌 Always clear on thread exit (safety)
+        mark_adhaan_active(False)
         logging.info("🛑 Full Adhaan detection thread stopped.")
 
 
 def start_audio_detection(stream_url: str):
-    """Starts full start→end detection in background."""
     global _detection_thread, _detection_stop, _detection_in_progress
     if _detection_in_progress.is_set():
         logging.info("⚙️ Detection already running — skipping new start.")
@@ -225,7 +227,6 @@ def start_audio_detection(stream_url: str):
 
 
 def stop_audio_detection():
-    """Stops current Adhaan detection thread."""
     global _detection_thread, _detection_stop, _detection_in_progress
     _detection_stop.set()
     if _detection_thread and _detection_thread.is_alive():
@@ -233,4 +234,4 @@ def stop_audio_detection():
         _detection_thread.join(timeout=5)
     _detection_thread = None
     _detection_in_progress.clear()
-    mark_adhaan_active(False)  # 🕌 ensure flag reset
+    mark_adhaan_active(False)
