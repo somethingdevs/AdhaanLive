@@ -118,7 +118,6 @@ def get_ambient_snapshot() -> dict:
         return dict(AMBIENT_STATE)
 
 
-# === CONTINUOUS ADHAAN DETECTION & RECORDING ===
 def _run_full_detection(stream_url: str, sample_rate: int = 44100):
     """Runs full start→end Adhaan detection pipeline with continuous recording."""
     global _detection_stop, _detection_in_progress
@@ -127,10 +126,15 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         logging.info(f"🎧 Starting Adhaan detection for stream: {stream_url}")
 
         bytes_per_second = sample_rate * 2
+
+        # === Detection thresholds ===
         ambient_rms = AMBIENT_STATE.get("rms", 0.0003)
         threshold = max(ambient_rms * 3, 0.05)
         silence_threshold = threshold * 0.5
-        required_silence = 7
+
+        # === Silence behavior constants ===
+        MAX_SILENCE_SEC = 10
+        TAIL_SEC = 6
 
         cmd = [
             "ffmpeg", "-i", stream_url,
@@ -151,7 +155,7 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
             raw_audio = process.stdout.read(bytes_per_second)
             if not raw_audio:
                 if process.poll() is not None:
-                    logging.warning("⚠️ FFmpeg stopped.")
+                    logging.warning("⚠️ FFmpeg stopped unexpectedly.")
                     break
                 continue
 
@@ -160,6 +164,7 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
             rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
             db = 20 * np.log10(rms + 1e-8)
 
+            # === Detect start ===
             if not adhaan_started:
                 if rms > threshold:
                     consecutive_high += 1
@@ -169,38 +174,57 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
                 if consecutive_high >= 2.0:
                     adhaan_started = True
                     start_time = time.strftime("%H:%M:%S")
+
                     file_path = os.path.join(
                         AUDIO_LOG_DIR, f"adhaan_full_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav"
                     )
                     log_event("start", file_path, rms, db)
                     mark_adhaan_active(True)
 
-                    # ✅ START PLAYBACK using new manager
                     PLAYBACK.start(stream_url)
 
                     logging.info(f"✅ Adhaan START confirmed at {start_time} | RMS={rms:.4f} | dB={db:.1f}")
+
                     for chunk in pre_buffer:
                         recording.extend(chunk)
                     continue
 
+            # === Recording in progress ===
             else:
                 recording.extend(raw_audio)
+
                 if rms < silence_threshold:
                     silence_counter += 1
                 else:
                     silence_counter = 0
 
-                if silence_counter >= required_silence:
+                # === Silence logic ===
+                if silence_counter >= MAX_SILENCE_SEC:
+
+                    logging.info(
+                        f"🔕 Silence {silence_counter}s detected — tail buffering {TAIL_SEC}s"
+                    )
+                    tail_data = []
+                    for _ in range(TAIL_SEC):
+                        chunk = process.stdout.read(bytes_per_second)
+                        if not chunk:
+                            break
+                        tail_data.append(chunk)
+                    for chunk in tail_data:
+                        recording.extend(chunk)
+
+                    # Finalize recording
                     end_time = time.strftime("%H:%M:%S")
                     save_wav(file_path, recording, sample_rate)
                     log_event("end", file_path, rms, db)
                     mark_adhaan_active(False)
 
-                    # ✅ STOP PLAYBACK smoothly
+                    logging.info("🎧 Allowing playback to finish last part...")
+                    time.sleep(8)  # grace period
                     PLAYBACK.stop()
 
                     logging.info(
-                        f"🏁 Adhaan END detected at {end_time} (duration={len(recording) / (bytes_per_second):.1f}s)"
+                        f"🏁 Adhaan END after tail. duration={len(recording) / bytes_per_second:.1f}s"
                     )
                     break
 
@@ -208,6 +232,7 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
 
     except Exception as e:
         logging.exception(f"❌ Detection thread error: {e}")
+
     finally:
         _detection_in_progress.clear()
         mark_adhaan_active(False)

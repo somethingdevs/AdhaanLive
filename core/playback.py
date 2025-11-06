@@ -24,9 +24,8 @@ class PlaybackManager:
     ):
         self.ffplay_path = ffplay_path
 
-        # ✅ Simple, clean playback args (no fade-out now)
         self.base_args = base_args or [
-            "-loglevel", "info",
+            "-loglevel", "error",
             "-autoexit",
             "-vn",
             "-nodisp"

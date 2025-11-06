@@ -17,7 +17,7 @@ from core.detector import (
 from core.playback import PLAYBACK
 
 try:
-    from core.detector import get_ambient_snapshot  # returns dict
+    from core.detector import get_ambient_snapshot
 except Exception:
     get_ambient_snapshot = None
 
