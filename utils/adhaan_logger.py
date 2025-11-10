@@ -1,6 +1,7 @@
 """
 Adhaan event logger.
 Logs Adhaan start/end events, including audio metrics and saved snippet info.
+Also records bandwidth usage for ambient and detection sessions.
 Creates /assets/adhaan_log.csv if missing.
 """
 
@@ -33,6 +34,7 @@ def _ensure_file_exists():
                 "rms",
                 "db",
                 "duration_seconds",
+                "data_mb",
             ])
         logging.info(f"🗂️ Created new Adhaan log file at {LOG_PATH}")
 
@@ -40,15 +42,17 @@ def _ensure_file_exists():
 def log_event(event_type: str,
               snippet_path: str = None,
               rms: float = None,
-              db: float = None):
+              db: float = None,
+              data_mb: float = None):
     """
     Logs Adhaan event details to CSV.
 
     Args:
-        event_type (str): 'start' or 'end'
+        event_type (str): 'start', 'end', 'ambient_usage', or 'data_usage'
         snippet_path (str): path to saved audio snippet file (optional)
         rms (float): root-mean-square amplitude
         db (float): decibel level (dBFS)
+        data_mb (float): data processed during session (MB)
     """
     global _last_start_time
     _ensure_file_exists()
@@ -74,10 +78,13 @@ def log_event(event_type: str,
                 f"{rms:.6f}" if rms is not None else "",
                 f"{db:.2f}" if db is not None else "",
                 f"{duration:.1f}" if duration is not None else "",
+                f"{data_mb:.2f}" if data_mb is not None else "",
             ])
 
-    # Pretty console log
-    if duration is not None:
+    # === Friendly console logs ===
+    if event_type in ("data_usage", "ambient_usage"):
+        logging.debug(f"📊 Logged {event_type} | {data_mb:.2f} MB | File: {snippet_rel or 'N/A'}")
+    elif duration is not None:
         logging.info(f"📝 Logged END | Duration: {duration:.1f}s | RMS: {rms:.6f} | dB: {db:.2f} | File: {snippet_rel}")
     else:
         logging.info(f"📝 Logged {event_type.upper()} | RMS: {rms:.6f} | dB: {db:.2f} | File: {snippet_rel}")

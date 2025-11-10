@@ -11,10 +11,8 @@ import threading
 import time
 import os
 import wave
-from typing import Optional
 from collections import deque
 from utils.adhaan_logger import log_event
-
 from core.playback import PLAYBACK
 
 # === Global shared state ===
@@ -28,7 +26,7 @@ _detection_thread = None
 _detection_stop = threading.Event()
 _detection_in_progress = threading.Event()
 
-# === Adhaan activity state (used by refresher/watchdog) ===
+# === Adhaan activity state ===
 _adhaan_active = False
 _adhaan_lock = threading.Lock()
 
@@ -62,11 +60,12 @@ def _ambient_monitor_loop(stream_url: str, sample_rate: int = 44100):
     global AMBIENT_STATE
     AMBIENT_STATE["running"] = True
 
+    total_bytes = 0
+
     while AMBIENT_STATE["running"]:
         try:
             cmd = [
-                "ffmpeg",
-                "-i", stream_url,
+                "ffmpeg", "-i", stream_url,
                 "-vn", "-acodec", "pcm_s16le",
                 "-ar", str(sample_rate), "-ac", "1",
                 "-t", "2",
@@ -77,6 +76,7 @@ def _ambient_monitor_loop(stream_url: str, sample_rate: int = 44100):
             process.terminate()
 
             if raw_audio:
+                total_bytes += len(raw_audio)
                 audio_data = np.frombuffer(raw_audio, dtype=np.int16)
                 rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
                 peak = np.max(np.abs(audio_data)) / 32768.0
@@ -87,7 +87,7 @@ def _ambient_monitor_loop(stream_url: str, sample_rate: int = 44100):
                         "rms": rms, "db": db, "peak": peak, "timestamp": time.time(),
                     })
 
-                logging.info(f"🎚️ Ambient RMS: {rms:.4f} | {db:.1f} dB | Peak: {peak:.4f}")
+                logging.debug(f"🎚️ Ambient RMS: {rms:.4f} | {db:.1f} dB | Peak: {peak:.4f}")
 
             time.sleep(10)
 
@@ -95,6 +95,8 @@ def _ambient_monitor_loop(stream_url: str, sample_rate: int = 44100):
             logging.warning(f"⚠️ Ambient monitor error: {e}")
             time.sleep(10)
 
+    total_mb = total_bytes / 1e6
+    log_event("ambient_usage", "ambient", data_mb=total_mb)
     logging.info("🛑 Ambient monitor stopped.")
 
 
@@ -118,6 +120,7 @@ def get_ambient_snapshot() -> dict:
         return dict(AMBIENT_STATE)
 
 
+# === MAIN DETECTION ===
 def _run_full_detection(stream_url: str, sample_rate: int = 44100):
     """Runs full start→end Adhaan detection pipeline with continuous recording."""
     global _detection_stop, _detection_in_progress
@@ -144,6 +147,7 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         ]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096)
 
+        total_bytes = 0
         pre_buffer = deque(maxlen=5)
         recording = bytearray()
         adhaan_started = False
@@ -158,6 +162,8 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
                     logging.warning("⚠️ FFmpeg stopped unexpectedly.")
                     break
                 continue
+
+            total_bytes += len(raw_audio)
 
             pre_buffer.append(raw_audio)
             audio_data = np.frombuffer(raw_audio, dtype=np.int16)
@@ -182,7 +188,6 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
                     mark_adhaan_active(True)
 
                     PLAYBACK.start(stream_url)
-
                     logging.info(f"✅ Adhaan START confirmed at {start_time} | RMS={rms:.4f} | dB={db:.1f}")
 
                     for chunk in pre_buffer:
@@ -200,10 +205,7 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
 
                 # === Silence logic ===
                 if silence_counter >= MAX_SILENCE_SEC:
-
-                    logging.info(
-                        f"🔕 Silence {silence_counter}s detected — tail buffering {TAIL_SEC}s"
-                    )
+                    logging.info(f"🔕 Silence {silence_counter}s detected — tail buffering {TAIL_SEC}s")
                     tail_data = []
                     for _ in range(TAIL_SEC):
                         chunk = process.stdout.read(bytes_per_second)
@@ -220,12 +222,10 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
                     mark_adhaan_active(False)
 
                     logging.info("🎧 Allowing playback to finish last part...")
-                    time.sleep(8)  # grace period
+                    time.sleep(8)
                     PLAYBACK.stop()
 
-                    logging.info(
-                        f"🏁 Adhaan END after tail. duration={len(recording) / bytes_per_second:.1f}s"
-                    )
+                    logging.info(f"🏁 Adhaan END after tail. duration={len(recording) / bytes_per_second:.1f}s")
                     break
 
         process.terminate()
@@ -234,6 +234,8 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         logging.exception(f"❌ Detection thread error: {e}")
 
     finally:
+        total_mb = total_bytes / 1e6
+        log_event("data_usage", file_path or "N/A", data_mb=total_mb)
         _detection_in_progress.clear()
         mark_adhaan_active(False)
         logging.info("🛑 Full Adhaan detection thread stopped.")
