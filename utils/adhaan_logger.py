@@ -1,8 +1,5 @@
 """
-Adhaan event logger.
-Logs Adhaan start/end events, including audio metrics and saved snippet info.
-Also records bandwidth usage for ambient and detection sessions.
-Creates /assets/adhaan_log.csv if missing.
+Adhaan event logger — CSV based.
 """
 
 import csv
@@ -12,17 +9,15 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-# === Paths ===
 BASE_DIR = Path(__file__).resolve().parent
-LOG_PATH = BASE_DIR.parent / "assets" / "adhaan_log.csv"
+LOG_PATH = BASE_DIR.parent / "assets" / "adhaan_log_24th_Nov.csv"
 
-# === Thread safety ===
 _log_lock = threading.Lock()
 _last_start_time = None
 
 
 def _ensure_file_exists():
-    """Ensure the CSV log file and directory exist with headers."""
+    """Ensure CSV file exists with header."""
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not LOG_PATH.exists():
         with open(LOG_PATH, mode="w", newline="", encoding="utf-8") as f:
@@ -36,7 +31,7 @@ def _ensure_file_exists():
                 "duration_seconds",
                 "data_mb",
             ])
-        logging.info(f"🗂️ Created new Adhaan log file at {LOG_PATH}")
+        logging.info(f"[LOG] Created adhaan_log_24th_Nov.csv")
 
 
 def log_event(event_type: str,
@@ -44,32 +39,25 @@ def log_event(event_type: str,
               rms: float = None,
               db: float = None,
               data_mb: float = None):
-    """
-    Logs Adhaan event details to CSV.
-
-    Args:
-        event_type (str): 'start', 'end', 'ambient_usage', or 'data_usage'
-        snippet_path (str): path to saved audio snippet file (optional)
-        rms (float): root-mean-square amplitude
-        db (float): decibel level (dBFS)
-        data_mb (float): data processed during session (MB)
-    """
+    """Append event row to CSV."""
     global _last_start_time
     _ensure_file_exists()
+
     timestamp = datetime.now()
     duration = None
 
     if event_type == "start":
         _last_start_time = timestamp
+
     elif event_type == "end" and _last_start_time:
         duration = (timestamp - _last_start_time).total_seconds()
         _last_start_time = None
 
-    # Normalize snippet path for CSV readability
     snippet_rel = os.path.basename(snippet_path) if snippet_path else ""
 
+    # --- Write CSV ---
     with _log_lock:
-        with open(LOG_PATH, mode="a", newline="", encoding="utf-8") as f:
+        with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
                 timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -81,10 +69,18 @@ def log_event(event_type: str,
                 f"{data_mb:.2f}" if data_mb is not None else "",
             ])
 
-    # === Friendly console logs ===
-    if event_type in ("data_usage", "ambient_usage"):
-        logging.debug(f"📊 Logged {event_type} | {data_mb:.2f} MB | File: {snippet_rel or 'N/A'}")
-    elif duration is not None:
-        logging.info(f"📝 Logged END | Duration: {duration:.1f}s | RMS: {rms:.6f} | dB: {db:.2f} | File: {snippet_rel}")
+    # --- Console logs (clean) ---
+    if event_type == "start":
+        logging.info(f"[LOG] START | file={snippet_rel} rms={rms:.6f} db={db:.2f}")
+
+    elif event_type == "end":
+        logging.info(
+            f"[LOG] END   | file={snippet_rel} dur={duration:.1f}s "
+            f"rms={rms:.6f} db={db:.2f}"
+        )
+
+    elif event_type in ("data_usage", "ambient_usage"):
+        logging.debug(f"[LOG] DATA  | {event_type}={data_mb:.2f}MB")
+
     else:
-        logging.info(f"📝 Logged {event_type.upper()} | RMS: {rms:.6f} | dB: {db:.2f} | File: {snippet_rel}")
+        logging.info(f"[LOG] {event_type.upper()} | file={snippet_rel}")
