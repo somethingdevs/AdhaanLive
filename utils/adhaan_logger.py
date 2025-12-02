@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-LOG_PATH = BASE_DIR.parent / "assets" / "adhaan_log_24th_Nov.csv"
+LOG_PATH = BASE_DIR.parent / "assets" / "adhaan_log.csv"
 
 _log_lock = threading.Lock()
 _last_start_time = None
@@ -31,7 +31,7 @@ def _ensure_file_exists():
                 "duration_seconds",
                 "data_mb",
             ])
-        logging.info(f"[LOG] Created adhaan_log_24th_Nov.csv")
+        logging.info(f"[LOG] Created adhaan_log.csv")
 
 
 def log_event(event_type: str,
