@@ -1,5 +1,5 @@
 """
-Handles livestream playback using FFplay.
+Livestream playback using FFplay.
 """
 
 import subprocess
@@ -8,26 +8,35 @@ from typing import Optional
 
 
 def play_livestream(stream_url: str) -> Optional[subprocess.Popen]:
-    """Plays the livestream via FFplay."""
+    """Start FFplay livestream playback."""
     if not stream_url:
-        logging.error("⚠️ No stream URL provided.")
+        logging.error("[PLAY] No stream URL provided")
         return None
 
-    cmd = ["ffplay", "-i", stream_url, "-loglevel", "error", "-autoexit"]
-    logging.info(f"🎥 Starting livestream: {stream_url}")
+    cmd = [
+        "ffplay",
+        "-i", stream_url,
+        "-loglevel", "error",
+        "-autoexit"
+    ]
+
+    logging.info(f"[PLAY] Starting playback")
 
     try:
-        process = subprocess.Popen(cmd)
-        return process
+        proc = subprocess.Popen(cmd)
+        return proc
+
     except FileNotFoundError:
-        logging.error("❌ ffplay not found. Ensure FFmpeg is installed and in PATH.")
+        logging.error("[PLAY] ffplay not found (install FFmpeg)")
+        return None
+
     except Exception as e:
-        logging.exception(f"Error starting livestream: {e}")
-    return None
+        logging.error(f"[PLAY] Playback error: {e}")
+        return None
 
 
 def stop_livestream(process: Optional[subprocess.Popen]) -> None:
-    """Stops the FFplay process."""
+    """Stop FFplay playback."""
     if process:
-        logging.info("🔇 Stopping livestream...")
+        logging.info("[PLAY] Stopping playback")
         process.terminate()

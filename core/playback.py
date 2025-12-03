@@ -110,36 +110,48 @@ class PlaybackManager:
         while not self._stop_flag.is_set():
             url = self.current_url()
             if not url:
-                logging.warning("No URL set for playback; waiting...")
+                logging.warning("[PLAY] No URL set for playback; waiting...")
                 time.sleep(1.0)
                 continue
 
             args = [self.ffplay_path, *self.base_args, "-i", url]
+
             try:
                 with self._lock:
-                    logging.info(f"Using ffplay for direct playback: {url}")
-                    self._proc = subprocess.Popen(args)
+                    logging.info(f"[PLAY] Starting playback | url={url}")
+
+                    # === THE IMPORTANT CHANGE ===
+                    self._proc = subprocess.Popen(
+                        args,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
 
                 while not self._stop_flag.is_set():
                     with self._lock:
                         proc = self._proc
+
                     if not proc:
                         break
+
                     rc = proc.poll()
                     if rc is None:
                         time.sleep(0.5)
                         continue
+
                     if rc == 0:
-                        logging.info("ffplay exited naturally.")
+                        logging.info("[PLAY] ffplay exited normally")
                     else:
-                        logging.warning("ffplay exited unexpectedly.")
+                        logging.warning("[PLAY] ffplay exited unexpectedly")
+
                     break
 
             except FileNotFoundError:
-                logging.error("ffplay not found. Ensure FFmpeg is installed and in PATH.")
+                logging.error("[PLAY] ffplay not found — install FFmpeg.")
                 break
+
             except Exception as e:
-                logging.exception(f"Error launching/monitoring ffplay: {e}")
+                logging.error(f"[PLAY] Launch error: {e}", exc_info=True)
 
             with self._lock:
                 self._stop_proc_locked()
@@ -149,11 +161,12 @@ class PlaybackManager:
 
             self._retries += 1
             if self._retries > self.max_retries:
-                logging.error("Playback failed too many times; giving up until URL changes.")
+                logging.error("[PLAY] Too many playback failures; giving up.")
                 break
 
             logging.info(
-                f"Retrying playback in {self.retry_delay_sec:.0f}s (attempt {self._retries}/{self.max_retries})..."
+                f"[PLAY] Retrying in {self.retry_delay_sec}s "
+                f"(attempt {self._retries}/{self.max_retries})..."
             )
             time.sleep(self.retry_delay_sec)
 

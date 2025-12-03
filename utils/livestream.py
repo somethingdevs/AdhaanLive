@@ -9,128 +9,168 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 
 
-def get_m3u8_url(page_url: str) -> Optional[str]:
-    """
-    Extracts Angelcam .m3u8 livestream URL by sniffing network requests.
-    Simulates a user click so the player starts streaming in headless mode.
-    """
+# ======================================================
+#   DISABLE ALL SELENIUMWIRE + PROXY + CHROME NOISE
+# ======================================================
+for noisy in [
+    "seleniumwire",
+    "seleniumwire.handler",
+    "seleniumwire.server",
+    "seleniumwire.storage",
+    "seleniumwire.proxy",
+    "urllib3.connectionpool",
+    "WDM",
+    "undetected_chromedriver",
+]:
+    logging.getLogger(noisy).setLevel(logging.CRITICAL)
 
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.common.action_chains import ActionChains
+# Also silence Chrome DevTools logs
+logging.getLogger("selenium.webdriver.remote.remote_connection").setLevel(logging.CRITICAL)
+
+
+# ======================================================
+#   GET M3U8 URL (QUIET MODE)
+# ======================================================
+def get_m3u8_url(page_url: str) -> Optional[str]:
+    """Extract .m3u8 URL with zero noisy logs."""
 
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--log-level=3")          # Chromium internal silence
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
     seleniumwire_options = {
-        'exclude_hosts': ['google.com', 'facebook.com', 'analytics', 'googletagmanager.com'],
-        'verify_ssl': False
+        "exclude_hosts": [
+            "google.com",
+            "facebook.com",
+            "analytics",
+            "googletagmanager.com",
+            "connect.facebook.net",
+        ],
+        "verify_ssl": False,
+        "request_storage_max_size": 200,      # Keep memory low, less clutter
     }
 
-    driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=seleniumwire_options)
+    driver = webdriver.Chrome(
+        options=chrome_options,
+        seleniumwire_options=seleniumwire_options
+    )
+
     start_time = time.time()
 
     try:
+        logging.info("[STREAM] Loading livestream page...")
         driver.get(page_url)
 
-        # --- Wait for iframe and switch into it ---
+        # Try entering iframe silently
         try:
-            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
-            iframe = driver.find_element(By.TAG_NAME, "iframe")
+            iframe = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "iframe"))
+            )
             driver.switch_to.frame(iframe)
-            logging.info("🪟 Switched to Angelcam iframe.")
-        except Exception:
-            logging.warning("⚠️ No iframe found — continuing without switch.")
+        except:
+            pass  # No iframe – quiet fail
 
-        # --- Try to click play button (if present) ---
+        # Try clicking play silently
         try:
-            video = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "video")))
-            actions = ActionChains(driver)
-            actions.move_to_element(video).click().perform()
-            logging.info("▶️ Clicked on video element to trigger playback.")
-        except Exception as e:
-            logging.debug(f"Could not click video: {e}")
+            video = WebDriverWait(driver, 8).until(
+                EC.presence_of_element_located((By.TAG_NAME, "video"))
+            )
+            ActionChains(driver).move_to_element(video).click().perform()
+        except:
+            pass  # also quiet
 
-        # --- Now sniff for .m3u8 requests ---
+        # Sniff .m3u8 URL
         timeout = time.time() + 40
         while time.time() < timeout:
-            for request in driver.requests:
-                if request.response and "angelcam.com" in request.url and ".m3u8" in request.url:
+            for req in driver.requests:
+                if (
+                    req.response
+                    and "angelcam.com" in req.url
+                    and ".m3u8" in req.url
+                ):
                     elapsed = time.time() - start_time
-                    logging.info(f"🎯 Found M3U8 URL in {elapsed:.1f}s: {request.url}")
-                    return request.url
-            time.sleep(0.3)
+                    logging.info(f"[STREAM] Found M3U8 URL ({elapsed:.1f}s)")
+                    return req.url
 
-        logging.warning("⚠️ Timed out waiting for .m3u8 request.")
+            time.sleep(0.25)
+
+        logging.warning("[STREAM] Timeout — no .m3u8 URL found")
         return None
 
     except Exception as e:
-        logging.error(f"❌ get_m3u8_url() failed: {e}")
+        logging.error(f"[STREAM] get_m3u8_url error: {e}")
         return None
 
     finally:
         driver.quit()
 
 
+# ======================================================
+#   RETRY WRAPPER
+# ======================================================
 def get_new_url_func() -> Optional[str]:
-    """
-    Wrapper with retries for robustness.
-    Retries up to 3 times to fetch a valid M3U8 livestream URL.
-    """
+    """Retry wrapper, minimal logging."""
     PAGE_URL = "https://iaccplano.click2stream.com/"
     max_retries = 3
 
     for attempt in range(1, max_retries + 1):
         url = get_m3u8_url(PAGE_URL)
         if url:
-            logging.info(f"✅ New stream URL obtained on attempt {attempt}.")
+            logging.info(f"[STREAM] New URL acquired (attempt {attempt})")
             return url
-        logging.warning(f"⚠️ Attempt {attempt} failed to fetch stream URL, retrying...")
+
+        logging.warning(f"[STREAM] Retry {attempt}/{max_retries} failed")
         time.sleep(2)
 
-    logging.error("❌ All attempts to fetch M3U8 URL failed.")
+    logging.error("[STREAM] All retries failed")
     return None
 
 
+# ======================================================
+#   UNMUTE (kept optional, also quiet)
+# ======================================================
 def unmute_video(livestream_url: str, auto_unmute: bool = True, wait_time: int = 3):
-    """
-    Opens the livestream and clicks the mute/unmute button if needed.
-    Keeps browser open for manual verification.
-    """
     if not auto_unmute:
-        logging.info("🔕 Auto-unmute disabled in config.")
         return
 
-    options = webdriver.ChromeOptions()
+    from seleniumwire import webdriver
+    from selenium.webdriver.chrome.options import Options
+
+    options = Options()
     options.add_experimental_option("detach", True)
     driver = webdriver.Chrome(options=options)
     driver.get(livestream_url)
 
     try:
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
-        iframe = driver.find_element(By.TAG_NAME, "iframe")
+        iframe = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "iframe"))
+        )
         driver.switch_to.frame(iframe)
 
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "video")))
-        video = driver.find_element(By.TAG_NAME, "video")
+        video = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "video"))
+        )
 
         actions = ActionChains(driver)
+
         for _ in range(5):
             actions.move_to_element(video).perform()
             time.sleep(wait_time)
             try:
-                mute_btn = driver.find_element(By.CLASS_NAME, "drawer-icon.media-control-icon")
+                mute_btn = driver.find_element(
+                    By.CLASS_NAME, "drawer-icon.media-control-icon"
+                )
                 mute_btn.click()
-                logging.info("🎉 Stream unmuted successfully!")
+                logging.info("[STREAM] Stream unmuted")
                 break
-            except Exception:
-                logging.debug("Mute button not found, retrying...")
+            except:
+                pass
 
-    except Exception as e:
-        logging.exception(f"❌ Unmute error: {e}")
+    except Exception:
+        pass
 
     finally:
-        logging.info("🎥 Browser will remain open for verification.")
+        logging.info("[STREAM] Browser open for verification")
