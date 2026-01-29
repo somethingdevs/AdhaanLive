@@ -34,7 +34,7 @@ def decode_expiry_from_token(token_url: str) -> Optional[int]:
 # ------------------------------------------------------
 # Cache helpers
 # ------------------------------------------------------
-def _read_cached_url():
+def read_cached_url():
     try:
         if os.path.exists(CACHE_PATH):
             with open(CACHE_PATH, "r") as f:
@@ -70,7 +70,7 @@ def smart_refresh_loop(get_new_url_func):
 
     logging.info("[REFRESH] Stream refresher started")
 
-    cached_url = _read_cached_url()
+    cached_url = read_cached_url()
     expiry_time = None
     next_url = None
     prefetch_done = False
