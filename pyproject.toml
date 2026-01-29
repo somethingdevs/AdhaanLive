@@ -1,15 +1,23 @@
-# pyproject.toml
 [project]
 name = "adhaan-streamer"
 version = "0.1.0"
 description = "Plays mosque livestream automatically at Adhaan time"
 readme = "README.md"
 requires-python = ">=3.9"
+
 dependencies = [
     "numpy",
-    "sounddevice",
-    "ffmpeg-python",
-    "selenium",
+    "requests",
     "tabulate",
-    "requests"
+    "pyyaml",
+
+    # Audio
+    "sounddevice",
+    "pyaudio",
+    "soundfile",
+    "ffmpeg-python",
+
+    # Streaming / browser
+    "selenium",
+    "selenium-wire",
 ]
