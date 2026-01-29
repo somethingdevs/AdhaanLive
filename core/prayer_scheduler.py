@@ -1,7 +1,3 @@
-# ============================================
-# prayer_scheduler.py — CLEAN LOG VERSION
-# ============================================
-
 import json
 import logging
 import time
@@ -23,10 +19,6 @@ WAKE_MINUTES_BEFORE = 10
 TIMEOUT_MINUTES = 90
 POST_CYCLE_COOLDOWN = 60
 
-
-# --------------------------
-# LOAD PRAYER TIMES
-# --------------------------
 
 def load_prayer_times():
     if not os.path.exists(PRAYER_JSON_PATH):
@@ -65,10 +57,6 @@ def get_next_prayer(prayers: dict):
     except:
         return "Unknown", now + timedelta(hours=6)
 
-
-# --------------------------
-# MAIN SCHEDULER LOOP
-# --------------------------
 
 def prayer_scheduler_loop(get_stream_url_fn, detection_flag):
     logging.info("[SCHED] Scheduler running")
@@ -141,10 +129,6 @@ def prayer_scheduler_loop(get_stream_url_fn, detection_flag):
             logging.info(f"[SCHED] {name} cycle complete")
             time.sleep(POST_CYCLE_COOLDOWN)
 
-
-# --------------------------
-# START THREAD
-# --------------------------
 
 def start_prayer_scheduler(get_stream_url_fn, detection_flag):
     t = threading.Thread(

@@ -1,18 +1,12 @@
-"""Initialize the core package and expose key functionality."""
-
-from .detector import (
-    start_audio_detection,
-    stop_audio_detection,
-)
-
-from .playback import PlaybackManager
-
-from .stream_refresher import smart_refresh_loop, CACHE_PATH
+"""
+Core runtime components for AdhaanLive.
+"""
 
 __all__ = [
-    "start_audio_detection",
-    "stop_audio_detection",
-    "PlaybackManager",
-    "smart_refresh_loop",
-    "CACHE_PATH",
+    "detector",
+    "playback",
+    "stream_refresher",
+    "prayer_scheduler",
+    "runtime_state",
+    "globals",
 ]
