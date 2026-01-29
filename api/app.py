@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from api.routes import health, status, events, schedule, control
+from api.routes import health, status, schedule, control
 
 app = FastAPI(
     title="AdhaanLive",
@@ -8,6 +8,5 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(status.router)
-app.include_router(events.router)
 app.include_router(schedule.router)
 app.include_router(control.router)
