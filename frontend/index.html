@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AdhaanLive</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- HEADER -->
+    <header class="header">
+      <div class="logo">🕌 AdhaanLive</div>
+      <div class="clock" id="current-time">--:--:--</div>
+    </header>
+
+    <!-- STATUS BAR -->
+    <section class="status-bar idle" id="status-bar">
+      <span class="status-text" id="status-text">Idle</span>
+    </section>
+
+    <!-- MAIN -->
+    <main class="main">
+
+      <!-- NEXT PRAYER -->
+      <section class="next-prayer">
+        <div class="label">Next Prayer</div>
+        <div class="prayer-name" id="next-prayer-name">--</div>
+        <div class="countdown" id="next-prayer-countdown">--:--:--</div>
+      </section>
+
+      <!-- PRAYER GRID (DYNAMIC) -->
+      <section class="prayer-grid" id="prayer-grid">
+        <!-- Filled dynamically -->
+      </section>
+
+    </main>
+
+    <!-- ADMIN CONTROLS -->
+    <section class="admin-panel">
+        <button onclick="toggleTheme()">🌗 Theme</button>
+
+      <button onclick="startDetection()">▶ Start Detection</button>
+      <button onclick="stopDetection()">⏹ Stop Detection</button>
+      <button onclick="stopPlayback()">🔇 Stop Playback</button>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <span id="hijri-date">—</span>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
