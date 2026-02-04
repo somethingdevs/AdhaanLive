@@ -13,52 +13,68 @@
 </head>
 <body>
 
-  <div class="container">
+<div class="audio-hint" id="audio-hint">
+  Tap anywhere to enable Adhaan audio
+</div>
 
-    <!-- HEADER -->
-    <header class="header">
-      <div class="logo">🕌 AdhaanLive</div>
-      <div class="clock" id="current-time">--:--:--</div>
-    </header>
+<div class="container">
 
-    <!-- STATUS BAR -->
-    <section class="status-bar idle" id="status-bar">
-      <span class="status-text" id="status-text">Idle</span>
+  <!-- HEADER -->
+  <header class="header">
+    <div class="logo">🕌 AdhaanLive</div>
+
+    <div class="header-right">
+      <div class="controls">
+        <div class="theme-toggle" id="theme-toggle" title="Toggle theme">
+          <span class="icon sun">☀️</span>
+          <span class="icon moon">🌙</span>
+          <div class="thumb"></div>
+        </div>
+
+        <button class="icon-btn" id="mute-toggle" title="Mute / Unmute">
+          🔊
+        </button>
+      </div>
+
+      <div class="clock-wrapper">
+        <div class="clock" id="current-time">--:--:--</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- STATUS BAR -->
+  <section class="status-bar idle" id="status-bar">
+    <span class="status-text" id="status-text">Idle</span>
+  </section>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <section class="next-prayer">
+      <div class="label">Next Prayer</div>
+      <div class="prayer-name" id="next-prayer-name">—</div>
+      <div class="countdown" id="next-prayer-countdown">--:--:--</div>
     </section>
 
-    <!-- MAIN -->
-    <main class="main">
+    <section class="prayer-grid" id="prayer-grid"></section>
 
-      <!-- NEXT PRAYER -->
-      <section class="next-prayer">
-        <div class="label">Next Prayer</div>
-        <div class="prayer-name" id="next-prayer-name">--</div>
-        <div class="countdown" id="next-prayer-countdown">--:--:--</div>
-      </section>
+  </main>
 
-      <!-- PRAYER GRID (DYNAMIC) -->
-      <section class="prayer-grid" id="prayer-grid">
-        <!-- Filled dynamically -->
-      </section>
+  <!-- ADMIN CONTROLS -->
+  <section class="admin-panel">
+    <button onclick="startDetection()">▶ Start Detection</button>
+    <button onclick="stopDetection()">⏹ Stop Detection</button>
+    <button onclick="stopPlayback()">🔇 Stop Playback</button>
+  </section>
 
-    </main>
+  <footer class="footer">
+    <span id="hijri-date">—</span>
+  </footer>
 
-    <!-- ADMIN CONTROLS -->
-    <section class="admin-panel">
-        <button onclick="toggleTheme()">🌗 Theme</button>
+</div>
 
-      <button onclick="startDetection()">▶ Start Detection</button>
-      <button onclick="stopDetection()">⏹ Stop Detection</button>
-      <button onclick="stopPlayback()">🔇 Stop Playback</button>
-    </section>
+<audio id="adhaan-player" preload="none"></audio>
 
-    <!-- FOOTER -->
-    <footer class="footer">
-      <span id="hijri-date">—</span>
-    </footer>
-
-  </div>
-
-  <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
