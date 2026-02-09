@@ -8,5 +8,4 @@ __all__ = [
     "stream_refresher",
     "prayer_scheduler",
     "runtime_state",
-    "globals",
 ]

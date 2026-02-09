@@ -1,16 +1,16 @@
+# =====================================
+# prayer_scheduler.py — STATE-CENTRALIZED
+# =====================================
+
 import json
 import logging
 import time
-from datetime import datetime, timedelta
 import threading
 import os
+from datetime import datetime, timedelta
 
-from core.detector import (
-    start_audio_detection,
-    stop_audio_detection,
-    is_adhaan_active,
-)
-from core.playback import PLAYBACK
+from core.detector import start_audio_detection, stop_audio_detection
+from core.runtime_state import state
 from utils.adhaan_logger import log_event
 
 PRAYER_JSON_PATH = os.path.join("assets", "prayer_times.json")
@@ -20,7 +20,11 @@ TIMEOUT_MINUTES = 90
 POST_CYCLE_COOLDOWN = 60
 
 
-def load_prayer_times():
+# -------------------------------------
+# Prayer time helpers
+# -------------------------------------
+
+def load_prayer_times() -> dict:
     if not os.path.exists(PRAYER_JSON_PATH):
         logging.warning("[SCHED] prayer_times.json missing")
         return {}
@@ -29,7 +33,7 @@ def load_prayer_times():
         with open(PRAYER_JSON_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logging.error(f"[ERROR] Failed to load prayer times: {e}")
+        logging.error(f"[SCHED] Failed to load prayer times: {e}")
         return {}
 
 
@@ -44,96 +48,109 @@ def get_next_prayer(prayers: dict):
             dt = datetime.combine(today, t)
             if dt > now:
                 upcoming.append((name, dt))
-        except:
+        except Exception:
             continue
 
     if upcoming:
         return sorted(upcoming, key=lambda x: x[1])[0]
 
-    # fallback = next day Fajr
+    # fallback → next day Fajr
     try:
-        fajr_t = datetime.strptime(prayers["Fajr"], "%H:%M:%S").time()
-        return "Fajr", datetime.combine(today + timedelta(days=1), fajr_t)
-    except:
+        fajr_time = datetime.strptime(prayers["Fajr"], "%H:%M:%S").time()
+        return "Fajr", datetime.combine(today + timedelta(days=1), fajr_time)
+    except Exception:
         return "Unknown", now + timedelta(hours=6)
 
 
-def prayer_scheduler_loop(get_stream_url_fn, detection_flag):
+# -------------------------------------
+# Scheduler core loop
+# -------------------------------------
+
+def _scheduler_loop(get_stream_url_fn):
     logging.info("[SCHED] Scheduler running")
 
     while True:
+        name = "Unknown"
+
         try:
             prayers = load_prayer_times()
             if not prayers:
-                logging.info("[SCHED] Waiting for prayer_times.json...")
+                logging.info("[SCHED] Waiting for prayer times...")
                 time.sleep(300)
                 continue
 
-            name, time_dt = get_next_prayer(prayers)
-            wake_dt = time_dt - timedelta(minutes=WAKE_MINUTES_BEFORE)
+            name, prayer_dt = get_next_prayer(prayers)
+            wake_dt = prayer_dt - timedelta(minutes=WAKE_MINUTES_BEFORE)
 
-            now = datetime.now()
-            sleep_sec = max(0, (wake_dt - now).total_seconds())
+            sleep_sec = max(0, (wake_dt - datetime.now()).total_seconds())
+            logging.info(
+                f"[SCHED] Next={name} at {prayer_dt.time()} | waking at {wake_dt.time()}"
+            )
 
-            logging.info(f"[SCHED] Next={name} at {time_dt.time()} | waking at {wake_dt.time()}")
-            log_event("sleep", "", 0, 0)
-            detection_flag.clear()
-
+            log_event("sleep")
             time.sleep(sleep_sec)
 
+            # -----------------------------
+            # Wake window
+            # -----------------------------
             stream_url = get_stream_url_fn()
             if not stream_url:
-                logging.warning("[SCHED] No stream URL at wake; retrying in 60s")
+                logging.warning("[SCHED] No stream URL; retrying in 60s")
                 time.sleep(60)
                 continue
 
+            log_event("wake")
             logging.info(f"[SCHED] Wake window for {name}")
-            log_event("wake", "", 0, 0)
 
-            # Wait until actual prayer time
-            until_prayer = (time_dt - datetime.now()).total_seconds()
-            if until_prayer > 0:
-                time.sleep(until_prayer)
+            # Wait until exact prayer time
+            until_prayer = max(
+                0, (prayer_dt - datetime.now()).total_seconds()
+            )
+            time.sleep(until_prayer)
 
+            # -----------------------------
             # Start detection
+            # -----------------------------
             logging.info(f"[SCHED] Starting detection for {name}")
             start_audio_detection(stream_url)
-            detection_flag.set()
 
-            timeout_dt = time_dt + timedelta(minutes=TIMEOUT_MINUTES)
+            timeout_dt = prayer_dt + timedelta(minutes=TIMEOUT_MINUTES)
 
+            # Wait for adhaan or timeout
             while datetime.now() < timeout_dt:
-                if is_adhaan_active():
+                if state.adhaan_active:
                     logging.info(f"[SCHED] Adhaan detected for {name}")
                     break
                 time.sleep(5)
 
-            if not is_adhaan_active():
+            if not state.adhaan_active:
                 logging.warning(f"[SCHED] No Adhaan detected for {name}")
-                log_event("no_adhaan", "", 0, 0)
+                log_event("no_adhaan")
                 stop_audio_detection()
-                detection_flag.clear()
 
-            while is_adhaan_active():
+            # Wait until adhaan completes naturally
+            while state.adhaan_active:
                 time.sleep(3)
 
-        except Exception as e:
-            logging.error(f"[ERROR] Scheduler failure: {e}", exc_info=True)
+        except Exception:
+            logging.error("[SCHED] Scheduler failure", exc_info=True)
 
         finally:
             stop_audio_detection()
-            detection_flag.clear()
-
-            PLAYBACK.stop()
+            state.reset_cycle()
 
             logging.info(f"[SCHED] {name} cycle complete")
             time.sleep(POST_CYCLE_COOLDOWN)
 
 
-def start_prayer_scheduler(get_stream_url_fn, detection_flag):
+# -------------------------------------
+# Public API
+# -------------------------------------
+
+def start_prayer_scheduler(get_stream_url_fn):
     t = threading.Thread(
-        target=prayer_scheduler_loop,
-        args=(get_stream_url_fn, detection_flag),
+        target=_scheduler_loop,
+        args=(get_stream_url_fn,),
         daemon=True,
     )
     t.start()

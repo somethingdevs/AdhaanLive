@@ -10,14 +10,11 @@ dependencies = [
     "requests",
     "tabulate",
     "pyyaml",
-
-    # Audio
+    "fastapi",
     "sounddevice",
     "pyaudio",
     "soundfile",
     "ffmpeg-python",
-
-    # Streaming / browser
     "selenium",
     "selenium-wire",
 ]
