@@ -1,0 +1,237 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* THEME VARIABLES */
+:root {
+  --bg-main: #0f172a;
+  --bg-panel: #111827;
+  --bg-accent: #1f2937;
+  --text-main: #f8fafc;
+  --text-muted: #9ca3af;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-yellow: #f59e0b;
+}
+
+/* LIGHT THEME */
+body.light {
+  --bg-main: #f3f4f6;
+  --bg-panel: #e5e7eb;
+  --bg-accent: #d1d5db;
+  --text-main: #020617;
+  --text-muted: #475569;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  background: linear-gradient(180deg, var(--bg-main), #020617);
+  color: var(--text-main);
+  height: 100vh;
+}
+
+/* AUDIO HINT */
+.audio-hint {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  color: white;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  cursor: pointer;
+}
+
+/* LAYOUT */
+.container {
+  max-width: 1200px;
+  height: 100%;
+  margin: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* HEADER */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+}
+
+/* CLOCK */
+.clock-wrapper {
+  width: 140px;
+  text-align: right;
+}
+
+.clock {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* STATUS BAR */
+.status-bar {
+  margin-top: 16px;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.status-bar.idle {
+  background: var(--bg-accent);
+  color: var(--text-muted);
+}
+
+.status-bar.listening {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-yellow);
+}
+
+.status-bar.adhaan {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--accent-red);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.6; }
+}
+
+/* MAIN */
+.main {
+  flex: 1;
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* NEXT PRAYER */
+.next-prayer {
+  background: var(--bg-panel);
+  padding: 24px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.label {
+  color: var(--text-muted);
+}
+
+.prayer-name {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.countdown {
+  font-size: 1.8rem;
+  color: var(--accent-green);
+}
+
+/* PRAYER GRID */
+.prayer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.prayer {
+  background: var(--bg-panel);
+  padding: 18px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.prayer.current {
+  border: 2px solid var(--accent-red);
+}
+
+.prayer.upcoming {
+  border: 2px solid var(--accent-green);
+}
+
+/* ADMIN */
+.admin-panel {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.admin-panel button {
+  background: var(--bg-panel);
+  border: 1px solid var(--bg-accent);
+  color: var(--text-main);
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* ICON BUTTON */
+.icon-btn {
+  background: var(--bg-panel);
+  border: none;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+/* THEME TOGGLE */
+.theme-toggle {
+  position: relative;
+  width: 64px;
+  height: 32px;
+  background: var(--bg-accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.theme-toggle .icon {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  opacity: 0.6;
+}
+
+.theme-toggle .sun { left: 8px; }
+.theme-toggle .moon { right: 8px; }
+
+.theme-toggle .thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.25s ease;
+}
+
+body.light .theme-toggle .thumb {
+  transform: translateX(32px);
+}

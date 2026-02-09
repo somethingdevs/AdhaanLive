@@ -1,5 +1,5 @@
 # ================================
-# detector.py — CLEAN LOG VERSION
+# detector.py — STATE-CENTRALIZED
 # ================================
 
 import subprocess
@@ -8,79 +8,58 @@ import logging
 import threading
 import time
 import os
-import wave
 from collections import deque
+from typing import Optional
 
 from utils.adhaan_logger import log_event
+from utils.audio_logger import save_wav
 from core.playback import PLAYBACK
+from core.runtime_state import state
 
 # -------------------------------
-# GLOBAL STATE
+# CONFIG
 # -------------------------------
 
-ADHAAN_MAX_DURATION_SEC = 5 * 60  # 5 min cap
+SAMPLE_RATE = 44100
+BYTES_PER_SECOND = SAMPLE_RATE * 2
 
-_detection_thread = None
-_detection_stop = threading.Event()
-_detection_in_progress = threading.Event()
+ADHAAN_MAX_DURATION_SEC = 5 * 60
+MAX_SILENCE_SEC = 10
+TAIL_SEC = 6
 
-_adhaan_active = False
-_adhaan_lock = threading.Lock()
+THRESHOLD = 0.05
+SILENCE_THRESHOLD = THRESHOLD * 0.5
 
 AUDIO_LOG_DIR = os.path.join("assets", "audio_logs")
 os.makedirs(AUDIO_LOG_DIR, exist_ok=True)
 
-
 # -------------------------------
-# ADHAAN ACTIVE FLAG
-# -------------------------------
-
-def mark_adhaan_active(active: bool):
-    global _adhaan_active
-    with _adhaan_lock:
-        _adhaan_active = active
-        logging.info(f"[DETECT] Active={active}")
-
-
-def is_adhaan_active() -> bool:
-    with _adhaan_lock:
-        return _adhaan_active
-
-
-# -------------------------------
-# WAV WRITER
+# THREAD CONTROL (local only)
 # -------------------------------
 
-def save_wav(path, audio_bytes, sample_rate=44100):
-    with wave.open(path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(audio_bytes)
-
+_detection_thread: Optional[threading.Thread] = None
+_detection_stop = threading.Event()
+_detection_running = threading.Event()
 
 # -------------------------------
-# DETECTION CORE LOOP
+# CORE DETECTION LOOP
 # -------------------------------
 
-def _run_full_detection(stream_url: str, sample_rate: int = 44100):
+def _run_detection(stream_url: str):
+    process = None
+    file_path = None
     total_bytes = 0
 
     try:
-        _detection_in_progress.set()
-        logging.info(f"[DETECT] Starting detection | stream={stream_url}")
+        _detection_running.set()
+        state.start_detection()
 
-        bytes_per_second = sample_rate * 2
-        threshold = 0.05
-        silence_threshold = threshold * 0.5
-
-        MAX_SILENCE_SEC = 10
-        TAIL_SEC = 6
+        logging.info(f"[DETECT] Detection started | stream={stream_url}")
 
         cmd = [
             "ffmpeg", "-i", stream_url,
             "-vn", "-acodec", "pcm_s16le",
-            "-ar", str(sample_rate), "-ac", "1",
+            "-ar", str(SAMPLE_RATE), "-ac", "1",
             "-f", "wav", "pipe:1",
         ]
 
@@ -97,36 +76,34 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
         adhaan_started = False
         silence_counter = 0
         consecutive_high = 0.0
-        file_path = None
         start_ts = None
         empty_reads = 0
 
         while not _detection_stop.is_set():
+            raw = process.stdout.read(BYTES_PER_SECOND)
 
-            raw_audio = process.stdout.read(bytes_per_second)
-            if not raw_audio:
+            if not raw:
                 empty_reads += 1
                 if empty_reads > 10 and process.poll() is not None:
-                    logging.warning("[DETECT] FFmpeg became unresponsive")
+                    logging.warning("[DETECT] FFmpeg stalled")
                     break
                 time.sleep(0.1)
                 continue
+
             empty_reads = 0
+            total_bytes += len(raw)
+            pre_buffer.append(raw)
 
-            total_bytes += len(raw_audio)
-            pre_buffer.append(raw_audio)
-
-            audio_data = np.frombuffer(raw_audio, dtype=np.int16)
-            rms = np.sqrt(np.mean(np.square(audio_data / 32768.0)))
+            audio = np.frombuffer(raw, dtype=np.int16)
+            rms = np.sqrt(np.mean((audio / 32768.0) ** 2))
             db = 20 * np.log10(rms + 1e-8)
 
-            # ---------- START DETECTION ----------
+            # ---------- ADHAAN START ----------
             if not adhaan_started:
-
-                if rms > threshold:
-                    consecutive_high += 1
-                else:
-                    consecutive_high = max(0.0, consecutive_high - 0.5)
+                consecutive_high = (
+                    consecutive_high + 1 if rms > THRESHOLD
+                    else max(0.0, consecutive_high - 0.5)
+                )
 
                 if consecutive_high >= 2.0:
                     adhaan_started = True
@@ -134,91 +111,101 @@ def _run_full_detection(stream_url: str, sample_rate: int = 44100):
 
                     file_path = os.path.join(
                         AUDIO_LOG_DIR,
-                        f"adhaan_full_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav"
+                        f"adhaan_{time.strftime('%Y-%m-%d_%H-%M-%S')}.wav"
                     )
 
-                    logging.info(f"[DETECT] START | rms={rms:.4f}, db={db:.1f}")
                     log_event("start", file_path, rms, db)
-                    mark_adhaan_active(True)
 
+                    state.start_adhaan()
                     PLAYBACK.start(stream_url)
 
                     for chunk in pre_buffer:
                         recording.extend(chunk)
 
-                    continue
+                    logging.info("[DETECT] Adhaan detected")
+                continue
 
-            # ---------- RECORDING IN PROGRESS ----------
-            else:
-                recording.extend(raw_audio)
+            # ---------- RECORDING ----------
+            recording.extend(raw)
 
-                if rms < silence_threshold:
-                    silence_counter += 1
-                else:
-                    silence_counter = 0
+            silence_counter = (
+                silence_counter + 1 if rms < SILENCE_THRESHOLD else 0
+            )
 
-                elapsed = time.time() - start_ts
-                if elapsed >= ADHAAN_MAX_DURATION_SEC:
-                    logging.info("[DETECT] Max duration reached")
-                    silence_counter = MAX_SILENCE_SEC
+            if time.time() - start_ts >= ADHAAN_MAX_DURATION_SEC:
+                silence_counter = MAX_SILENCE_SEC
 
-                if silence_counter >= MAX_SILENCE_SEC:
-                    logging.info(f"[DETECT] Silence detected ({silence_counter}s)")
+            if silence_counter >= MAX_SILENCE_SEC:
+                logging.info("[DETECT] Adhaan end (silence)")
 
-                    for _ in range(TAIL_SEC):
-                        tail = process.stdout.read(bytes_per_second)
-                        if not tail:
-                            break
-                        recording.extend(tail)
+                for _ in range(TAIL_SEC):
+                    tail = process.stdout.read(BYTES_PER_SECOND)
+                    if not tail:
+                        break
+                    recording.extend(tail)
 
-                    save_wav(file_path, recording, sample_rate)
-                    duration = len(recording) / bytes_per_second
+                save_wav(file_path, recording)
+                log_event("end", file_path, rms, db)
 
-                    log_event("end", file_path, rms, db)
-                    logging.info(f"[DETECT] END | duration={duration:.1f}s")
+                state.end_adhaan()
 
-                    mark_adhaan_active(False)
+                time.sleep(8)
+                PLAYBACK.stop()
+                break
 
-                    time.sleep(8)
-                    PLAYBACK.stop()
+    except Exception:
+        logging.error("[DETECT] Failure", exc_info=True)
 
-                    break
+        # 🔒 SAFETY: never leave playback/adhaan running
+        if state.playback_active:
+            PLAYBACK.stop()
 
-        process.terminate()
-
-    except Exception as e:
-        logging.error(f"[ERROR] Detection failure: {e}", exc_info=True)
+        if state.adhaan_active:
+            state.end_adhaan()
 
     finally:
-        total_mb = total_bytes / 1e6
-        log_event("data_usage", file_path or "N/A", data_mb=total_mb)
-        _detection_in_progress.clear()
-        mark_adhaan_active(False)
-        logging.info("[DETECT] Detection thread stopped")
+        if process:
+            try:
+                process.terminate()
+            except Exception:
+                pass
 
+        # 🔒 FINAL GUARANTEE
+        if state.playback_active:
+            PLAYBACK.stop()
+
+        log_event(
+            "data_usage",
+            file_path or "N/A",
+            data_mb=total_bytes / 1e6,
+        )
+
+        state.stop_detection()
+        _detection_running.clear()
+        logging.info("[DETECT] Detection stopped")
 
 # -------------------------------
-# PUBLIC START/STOP
+# PUBLIC API
 # -------------------------------
 
 def start_audio_detection(stream_url: str):
     global _detection_thread
 
-    if _detection_in_progress.is_set():
+    if _detection_running.is_set():
         logging.info("[DETECT] Already running")
         return
 
     stop_audio_detection()
-
     _detection_stop.clear()
+
     _detection_thread = threading.Thread(
-        target=_run_full_detection,
+        target=_run_detection,
         args=(stream_url,),
-        daemon=True
+        daemon=True,
     )
     _detection_thread.start()
 
-    logging.info("[DETECT] Thread started")
+    logging.info("[DETECT] Thread launched")
 
 
 def stop_audio_detection():
@@ -227,9 +214,8 @@ def stop_audio_detection():
     _detection_stop.set()
 
     if _detection_thread and _detection_thread.is_alive():
-        logging.info("[DETECT] Stopping thread...")
+        logging.info("[DETECT] Stopping thread")
         _detection_thread.join(timeout=5)
 
     _detection_thread = None
-    _detection_in_progress.clear()
-    mark_adhaan_active(False)
+    _detection_running.clear()
