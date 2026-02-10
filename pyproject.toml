@@ -12,7 +12,10 @@ dependencies = [
   "numpy",
   "pyyaml",
   "ffmpeg-python",
+  "selenium",
+  "selenium-wire",
 ]
+
 
 
 [project.optional-dependencies]
