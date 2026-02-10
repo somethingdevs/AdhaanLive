@@ -6,15 +6,17 @@ readme = "README.md"
 requires-python = ">=3.9"
 
 dependencies = [
-    "numpy",
-    "requests",
-    "tabulate",
-    "pyyaml",
-    "fastapi",
-    "sounddevice",
-    "pyaudio",
-    "soundfile",
-    "ffmpeg-python",
-    "selenium",
-    "selenium-wire",
+  "fastapi",
+  "requests",
+  "numpy",
+  "pyyaml",
+  "ffmpeg-python",
 ]
+
+[project.optional-dependencies]
+local-audio = [
+  "sounddevice",
+  "pyaudio",
+  "soundfile",
+]
+
