@@ -2,6 +2,7 @@ import threading
 import logging
 import time
 import json
+import os
 from datetime import datetime, timedelta
 
 import uvicorn
@@ -34,6 +35,8 @@ def prayer_refresh_loop():
     city = cfg["settings"]["city"]
     country = cfg["settings"]["country"]
     method = cfg["settings"]["method"]
+
+    os.makedirs("assets", exist_ok=True)
 
     while True:
         try:
