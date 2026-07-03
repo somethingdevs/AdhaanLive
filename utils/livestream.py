@@ -59,6 +59,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 
+from utils.config_loader import load_config
+
 
 # ======================================================
 #   GET M3U8 URL (QUIET MODE)
@@ -164,7 +166,8 @@ def get_new_url_func() -> Optional[str]:
     """
     Retry wrapper with minimal logging.
     """
-    PAGE_URL = "https://iaccplano.click2stream.com/"
+    config = load_config()
+    PAGE_URL = config.get("livestream", {}).get("url") or "https://iaccplano.click2stream.com/"
     max_retries = 3
 
     for attempt in range(1, max_retries + 1):
