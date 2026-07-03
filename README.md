@@ -1,224 +1,73 @@
-# 🕌 Adhaan Live
+# AdhaanLive
 
-**Adhaan Live** is an open-source Python application that detects and streams the **live Adhaan (call to prayer)**
-from mosque livestreams directly to homes or connected speakers.  
-The goal is to build a community-driven platform where masjids can easily expose their Adhaan livestream via a simple
-API, and users can experience it automatically at prayer times.
+AdhaanLive detects the live Adhaan (call to prayer) from a mosque's public livestream and plays it automatically at prayer time. It scrapes the livestream's `.m3u8` URL, listens to the stream's audio for loudness patterns matching an Adhaan, and triggers playback (server-side via `ffplay`, and in the browser frontend) when one is detected. It currently supports a single, configured mosque.
 
----
+## Requirements
 
-## 🌍 Project Overview
+- Python >= 3.9
+- `ffmpeg` and `ffplay` available on your system `PATH` (used for audio detection and server-side playback)
+- Google Chrome installed (the livestream URL scraper drives headless Chrome via Selenium)
 
-The Adhaan Streamer connects to a mosque’s 24/7 livestream (e.g., Click2Stream, Angelcam, YouTube Live, etc.)  
-It uses **audio detection and prayer-time scheduling** to:
-
-- Listen for Adhaan automatically at the correct times
-- Stream the live audio/video when Adhaan begins
-- Detect when the Adhaan ends and stop playback
-
-It can be run locally on a computer, Raspberry Pi, or small IoT device, and can later integrate into home automation
-systems.
-
----
-
-## 🧩 Features
-
-- 🕓 Fetches **accurate prayer times** from a public API
-- 🎙️ Detects **live Adhaan start** based on loudness thresholds
-- 🔇 Detects **Adhaan end** automatically via silence detection
-- 🎥 Streams **real-time mosque audio/video**
-- 🔁 Refreshes livestream URLs automatically (avoiding token expiry)
-- 🧠 Modular code — easy to integrate with APIs, GUIs, or dashboards
-
----
-
-## 🛠️ Tech Stack
-
-| Category | Technology |
-|-----------|-------------|
-| Language | Python 3.9 |
-| Audio/Video | FFmpeg, PyAudio, SoundDevice |
-| Data Processing | NumPy |
-| Scheduling | `datetime`, prayer time API |
-| API | FastAPI *(planned)* |
-| UI *(optional)* | Streamlit *(future)* |
-
----
-
-## ⚙️ Installation
-
-### 1️⃣ Clone this repository
+## Setup
 
 ```bash
-git clone https://github.com/somethingdevs/AdhaanLive
-cd AdhaanLive
+pip install -r requirements.txt
 ```
 
-### 2️⃣ Create and activate a Conda environment
+Optional local-audio extras (`sounddevice`, `pyaudio`, `soundfile`) are listed as commented-out lines in `requirements.txt` — uncomment and install them if you need local audio device access.
+
+Configure your mosque and location in `config.yml`:
+
+```yaml
+settings:
+  city: "Dallas"
+  country: "US"
+  method: 2  # Calculation method for prayer times (2-ISNA)
+  school: 1  # 0 - Shafi, 1 - Hanafi
+
+livestream:
+  url: "https://iaccplano.click2stream.com/"  # Mosque click2stream link
+  auto_unmute: true
+  browser: "chrome"
+  wait_time: 3
+```
+
+## Running
 
 ```bash
-conda env create -f environment.yml
-conda activate AdhaanLive
+python main.py
 ```
 
-(If you prefer pip, you can also run pip install -r requirements.txt.)
+This starts, as daemon threads:
+- the FastAPI server on port 8000
+- the stream refresher (periodically re-scrapes the `.m3u8` stream URL)
+- the prayer scheduler (wakes before each prayer and starts/stops detection)
+- a daily prayer-time refresh loop (writes `assets/prayer_times.json`)
 
-### 3️⃣ Verify installation
+The frontend is served at `http://localhost:8000/`.
 
-Run this command to make sure everything is installed correctly:
+## Project structure
 
-```bash
-python -m sounddevice
-```
-
-You should see a list of available audio devices.
-
-## ▶️ Usage
-
-Run the main script:
-
-```bash
-python adhaan_streamer.py
-```
-
-The program will:
-
-- Fetch today’s prayer times
-
-- Display them in a table
-
-- Continuously listen for Adhaan start
-
-- Automatically play the livestream when detected
-
-Example console output:
-
-```bash
-🎙️ Listening for Adhaan in livestream audio...
-🔊 Adhaan detected in livestream! Playing video...
-🔇 Adhaan ended. Stopping livestream.
-```
-
-## ⚡ Configuration
-
-You can update the livestream URL or location by modifying this in your code:
-
-```python
-LIVESTREAM_URL = "https://iaccplano.click2stream.com/"
-```
-
-Or extend util.py to:
-
-Support different mosque livestreams
-
-Use alternative prayer time APIs
-
-Store API keys or tokens securely
-
-## 📁 Project Structure
-
-```bash
-AdhaanLive/
-│
-├── adhaan_streamer.py # Main application logic
-├── util.py # Helper functions (API calls, URL refresh, etc.)
-├── environment.yml # Conda environment file
-├── requirements.txt # Pip dependencies (optional)
-├── README.md # Documentation
-└── .gitignore # Ignore build and cache files
-```
-
-## 🧱 Future Roadmap
-
-- ✅ **Phase 1:** CLI version (local streaming)
-- 🧭 **Phase 2:** REST API backend (FastAPI) for public access
-- 💻 **Phase 3:** Web UI (Streamlit dashboard) for setup & status
-- ☁️ **Phase 4:** Cloud-hosted Adhaan aggregator (multi-masjid support)
-- 🕋 **Phase 5:** Integration with IoT devices / smart speakers
-
-## 🤝 Contributing
-
-We welcome contributions from the community!
-
-1. Fork the repository
-2. Create a new branch (`feature/new-feature`)
-3. Commit your changes
-4. Push to your branch and open a pull request
-
-Please test your changes locally before submitting.
-
-
----
-
-## 🧾 License
-
-This project is licensed under the **MIT License** — feel free to use, modify, and distribute it.
-
----
-
-## 💬 Acknowledgements
-
-- **Click2Stream / Angelcam** for livestream access
-- **Aladhan API** for global prayer time data
-- **Community masjids** for inspiring this project
-- Everyone working to make Adhaan accessible to all 💚
-
-> _"And who is better in speech than one who calls to Allah, does righteous deeds, and says,  
-> 'Indeed, I am of the Muslims.'"_ — **Qur’an 41:33**
-
-## 🚀 Quick Start Preview
-
-Here’s how the Adhaan Streamer works conceptually:
-
-```bash
-            ┌────────────────────────────────────────┐
-            │          Mosque Livestream             │
-            │ (e.g., Click2Stream / Angelcam / YT)   │
-            └────────────────────────────────────────┘
-                            │
-                            ▼
-              ┌────────────────────────┐
-              │  Stream URL Fetcher     │
-              │ (auto-refresh tokenized)│
-              └────────────────────────┘
-                            │
-                            ▼
-          ┌──────────────────────────────────┐
-          │    Audio Detection Engine        │
-          │  - monitors sound intensity      │
-          │  - detects Adhaan start & end    │
-          └──────────────────────────────────┘
-                            │
-                            ▼
-      ┌─────────────────────────────────────┐
-      │     Player (FFmpeg + FFplay)        │
-      │ Streams live video + audio to home  │
-      └─────────────────────────────────────┘
-                            │
-                            ▼
-         ┌─────────────────────────────────┐
-         │  Logs + Notifications (Planned) │
-         │  e.g., mobile alerts / webhooks │
-         └─────────────────────────────────┘
-```
-
-### 🧭 Typical Workflow
-
-1. `util.py` fetches prayer times via API.
-2. Main script listens for Adhaan near each prayer time.
-3. When Adhaan starts → plays the livestream automatically.
-4. When silence is detected → stops playback.
-5. Stream URL refreshes every 10 minutes to avoid expiry.
-
----
-
-### 🌐 Future Integration Ideas
-
-- REST API for remote access (`/play_adhaan`, `/get_prayer_times`)
-- Streamlit or React dashboard for live status
-- Integration with **Angelcam**, **Click2Stream**, and **YouTube Live** APIs
-- Smart home integration (Google Home, Alexa, etc.)
-
----
-
-## 🧡 Built for communities, masjids, and families who want to hear the Adhaan echo in every home.
+- `main.py` — bootstraps and orchestrates all threads; handles startup/shutdown.
+- `core/`
+  - `runtime_state.py` — `RuntimeState` singleton (`state`), the single source of truth for detection/playback/adhaan status.
+  - `detector.py` — pipes stream audio through ffmpeg and uses RMS-loudness detection to find Adhaan start/end; records WAV snippets to `assets/audio_logs/`.
+  - `playback.py` — `PlaybackManager` (`PLAYBACK` singleton); drives server-side playback via `ffplay` with retry logic.
+  - `prayer_scheduler.py` — schedules a wake window before each prayer, then starts/stops detection around it.
+  - `stream_refresher.py` — `StreamRefresher`; periodically re-scrapes the `.m3u8` URL and defers refresh while Adhaan/playback is active.
+- `utils/`
+  - `livestream.py` — Selenium-wire headless Chrome scraper that sniffs the `.m3u8` URL from the configured livestream page.
+  - `prayer_api.py` — Aladhan API client for prayer times.
+  - `config_loader.py` — loads `config.yml`.
+  - `logger.py`, `adhaan_logger.py` — logging setup and CSV event log.
+  - `audio_logger.py` — WAV snippet writer.
+- `api/`
+  - `app.py` — FastAPI app; mounts routes and serves the static frontend.
+  - `routes/`
+    - `health.py` — `GET /health`
+    - `status.py` — `GET /status` (detection/playback/adhaan state, current stream URL)
+    - `schedule.py` — `GET /schedule` (today's prayer times from `assets/prayer_times.json`)
+    - `control.py` — `POST /control/detection/start`, `POST /control/detection/stop`, `POST /control/playback/stop`
+    - `client_logs.py` — `POST /client-log` (frontend event logging)
+- `frontend/` — `index.html`, `app.js` (polls `/status` and `/schedule`, plays the stream in a browser `<audio>` element), `styles.css`.
+- `assets/` — runtime output (gitignored): `prayer_times.json`, logs, `audio_logs/`, `adhaan_log.csv`.
