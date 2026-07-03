@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+requests
+numpy
+pyyaml
+ffmpeg-python
+selenium
+selenium-wire
+
+# Optional: local-audio extras (pip install -r requirements.txt with these uncommented)
+# sounddevice
+# pyaudio
+# soundfile
