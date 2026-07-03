@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from core.detector import start_audio_detection, stop_audio_detection
 from core.playback import PLAYBACK
 from core.runtime_state import state
+from core.stream_refresher import get_current_stream_url
 
 router = APIRouter()
 
@@ -35,10 +36,11 @@ def start_detection():
     if state.detection_active:
         return {"success": False, "message": "Detection already running"}
 
-    if not state.stream_url:
+    stream_url = get_current_stream_url()
+    if not stream_url:
         return {"success": False, "message": "No stream URL available"}
 
-    start_audio_detection(state.stream_url)
+    start_audio_detection(stream_url)
 
     return {"success": True, "message": "Detection started"}
 
