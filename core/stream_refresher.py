@@ -26,7 +26,7 @@ class StreamRefresher:
     """
     Periodically refreshes the stream URL.
     Respects runtime_state to avoid disrupting
-    detection or playback.
+    detection.
     """
 
     def __init__(self, fetch_stream_url_fn: Callable[[], Optional[str]]):
@@ -80,9 +80,9 @@ class StreamRefresher:
                 # ---------------------------------
                 # Respect active system state
                 # ---------------------------------
-                if state.adhaan_active or state.playback_active:
+                if state.adhaan_active:
                     logging.debug(
-                        "[STREAM] Adhaan/playback active — deferring refresh"
+                        "[STREAM] Adhaan active — deferring refresh"
                     )
                     time.sleep(LOCKOUT_CHECK_SEC)
                     continue

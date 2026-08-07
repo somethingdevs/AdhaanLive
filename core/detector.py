@@ -13,7 +13,6 @@ from typing import Optional
 
 from utils.adhaan_logger import log_event
 from utils.audio_logger import save_wav
-from core.playback import PLAYBACK
 from core.runtime_state import state
 
 # -------------------------------
@@ -117,7 +116,6 @@ def _run_detection(stream_url: str):
                     log_event("start", file_path, rms, db)
 
                     state.start_adhaan()
-                    PLAYBACK.start(stream_url)
 
                     for chunk in pre_buffer:
                         recording.extend(chunk)
@@ -148,18 +146,12 @@ def _run_detection(stream_url: str):
                 log_event("end", file_path, rms, db)
 
                 state.end_adhaan()
-
-                time.sleep(8)
-                PLAYBACK.stop()
                 break
 
     except Exception:
         logging.error("[DETECT] Failure", exc_info=True)
 
-        # 🔒 SAFETY: never leave playback/adhaan running
-        if state.playback_active:
-            PLAYBACK.stop()
-
+        # 🔒 SAFETY: never leave adhaan running
         if state.adhaan_active:
             state.end_adhaan()
 
@@ -171,8 +163,8 @@ def _run_detection(stream_url: str):
                 pass
 
         # 🔒 FINAL GUARANTEE
-        if state.playback_active:
-            PLAYBACK.stop()
+        if state.adhaan_active:
+            state.end_adhaan()
 
         log_event(
             "data_usage",

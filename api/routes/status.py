@@ -9,7 +9,6 @@ router = APIRouter()
 def status():
     return {
         "detection_active": state.detection_active,
-        "playback_active": state.playback_active,
         "adhaan_active": state.adhaan_active,
         "last_event": state.last_event,
         "last_event_time": state.last_event_time,

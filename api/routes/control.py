@@ -5,25 +5,10 @@
 from fastapi import APIRouter
 
 from core.detector import start_audio_detection, stop_audio_detection
-from core.playback import PLAYBACK
 from core.runtime_state import state
 from core.stream_refresher import get_current_stream_url
 
 router = APIRouter()
-
-
-# ---------- PLAYBACK ----------
-
-@router.post("/control/playback/stop")
-def stop_playback():
-    """
-    Force-stop playback.
-    """
-    if not state.playback_active:
-        return {"success": False, "message": "Playback not active"}
-
-    PLAYBACK.stop()
-    return {"success": True, "message": "Playback stopped"}
 
 
 # ---------- DETECTION ----------

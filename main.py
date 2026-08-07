@@ -17,7 +17,6 @@ from api.app import app
 from core.stream_refresher import start_stream_refresher
 from core.prayer_scheduler import start_prayer_scheduler
 from core.runtime_state import state
-from core.playback import PLAYBACK
 
 # FastAPI
 def start_api():
@@ -98,7 +97,6 @@ def main():
         logging.info("[CORE] Shutdown requested")
 
         state.shutdown()
-        PLAYBACK.stop()
 
         logging.info("[CORE] AdhaanLive stopped")
 

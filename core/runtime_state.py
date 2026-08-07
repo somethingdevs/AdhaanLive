@@ -16,7 +16,6 @@ class RuntimeState:
         # Core lifecycle flags
         self.detection_active: bool = False
         self.adhaan_active: bool = False
-        self.playback_active: bool = False
 
         # Context
         self.current_prayer: Optional[str] = None
@@ -60,16 +59,6 @@ class RuntimeState:
             self.ended_at = datetime.utcnow()
             self._set_event("ADHAAN_ENDED")
 
-    def start_playback(self):
-        with self.lock:
-            self.playback_active = True
-            self._set_event("PLAYBACK_STARTED")
-
-    def stop_playback(self):
-        with self.lock:
-            self.playback_active = False
-            self._set_event("PLAYBACK_STOPPED")
-
     def reset_cycle(self):
         """
         Called when a prayer cycle fully completes.
@@ -77,7 +66,6 @@ class RuntimeState:
         with self.lock:
             self.detection_active = False
             self.adhaan_active = False
-            self.playback_active = False
             self.current_prayer = None
             self.started_at = None
             self.ended_at = None
@@ -92,7 +80,6 @@ class RuntimeState:
             return {
                 "detection_active": self.detection_active,
                 "adhaan_active": self.adhaan_active,
-                "playback_active": self.playback_active,
                 "current_prayer": self.current_prayer,
                 "last_event": self.last_event,
                 "last_event_time": (

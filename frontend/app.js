@@ -62,6 +62,10 @@ let nextPrayerTime = null;
 let isPlaying = false;
 let lastStatusSignature = "";
 
+// Set when the user silences audio on this device for the current adhaan.
+// Suppresses replay until the adhaan ends, then resets.
+let dismissedThisAdhaan = false;
+
 /*********************************
  * LIFECYCLE LOGGING
  *********************************/
@@ -212,7 +216,7 @@ async function pollStatus() {
   const s = await fetchJSON("/status");
 
   const signature =
-    `${s.adhaan_active}-${s.playback_active}-${s.detection_active}`;
+    `${s.adhaan_active}-${s.detection_active}`;
 
   if (signature !== lastStatusSignature) {
     clientLog("status_changed", s);
@@ -230,11 +234,17 @@ async function pollStatus() {
     ? "🟡 Listening for Adhaan"
     : "Idle";
 
+  // A new adhaan clears any prior dismissal.
+  if (!s.adhaan_active) {
+    dismissedThisAdhaan = false;
+  }
+
   if (
     s.adhaan_active &&
     s.stream_url &&
     audioUnlocked &&
-    !muted
+    !muted &&
+    !dismissedThisAdhaan
   ) {
     playAdhaan(s.stream_url);
   } else {
@@ -325,4 +335,11 @@ function post(path) {
 }
 window.startDetection = () => post("/control/detection/start");
 window.stopDetection = () => post("/control/detection/stop");
-window.stopPlayback = () => post("/control/playback/stop");
+
+// Client-only: silence audio on THIS device for the current adhaan.
+// Playback is browser-side, so nothing is sent to the server.
+window.stopPlayback = () => {
+  dismissedThisAdhaan = true;
+  clientLog("playback_dismissed");
+  stopAdhaan();
+};

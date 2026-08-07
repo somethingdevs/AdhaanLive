@@ -6,7 +6,7 @@ livestream and plays it in users' homes around prayer time. Python backend
 (FastAPI) + vanilla JS frontend. Currently single-mosque.
 
 ## How to run
-- Python >= 3.9. Requires `ffmpeg` and `ffplay` on PATH.
+- Python >= 3.9. Requires `ffmpeg` on PATH.
 - Entry point: `python main.py`. This starts, as daemon threads: the FastAPI
   server (port 8000), the stream refresher, the prayer scheduler, and the
   daily prayer-time refresh.
@@ -23,12 +23,10 @@ livestream and plays it in users' homes around prayer time. Python backend
     reintroduce scattered global flags.
   - `detector.py` — pipes stream audio via ffmpeg; RMS-loudness detection of
     adhaan start/end; records WAV snippets to `assets/audio_logs/`.
-  - `playback.py` — `PlaybackManager` (`PLAYBACK` singleton); server-side
-    `ffplay` playback with retry logic.
   - `prayer_scheduler.py` — schedules a wake window before each prayer, then
     starts/stops detection.
   - `stream_refresher.py` — `StreamRefresher`; periodically re-scrapes the
-    `.m3u8` URL and defers refresh while adhaan/playback is active.
+    `.m3u8` URL and defers refresh while an adhaan is active.
 - `utils/`
   - `livestream.py` — Selenium-wire headless Chrome scraper that sniffs the
     `.m3u8` URL from click2stream/angelcam.
@@ -38,9 +36,10 @@ livestream and plays it in users' homes around prayer time. Python backend
 - `api/`
   - `app.py` — FastAPI app; mounts routes and the static frontend.
   - `routes/` — `health`, `status`, `schedule`, `control` (start/stop
-    detection, stop playback), `client_logs`.
+    detection), `client_logs`.
 - `frontend/` — `index.html`, `app.js` (polls `/status` every 2s and plays the
-  stream in a browser `<audio>` element), `styles.css`.
+  stream in a browser `<audio>` element; this is the ONLY place audio plays),
+  `styles.css`.
 - `assets/` — gitignored runtime output: `prayer_times.json`, logs,
   `audio_logs/`, `adhaan_log.csv`.
 
@@ -66,10 +65,18 @@ livestream and plays it in users' homes around prayer time. Python backend
    guaranteeing `assets/` exists (it currently works only as a side effect of
    logging setup). Make it robust.
 
+## IMPORTANT — playback is client-only (settled)
+Audio plays ONLY in the browser, via the `<audio>` element in
+`frontend/app.js`. Server-side playback has been removed and must NOT be
+reintroduced: no `ffplay`, no `core/playback.py`, no `playback_active` runtime
+flag, no `/control/playback/stop` route. The server's job is to detect the
+adhaan and publish that state; every client decides for itself whether to play.
+The "Silence (this device)" button is purely client-side — it sets a
+`dismissedThisAdhaan` flag that suppresses replay until `adhaan_active` goes
+false.
+
 ## IMPORTANT — do not change without explicit direction
-The audio-detection approach (RMS loudness in `core/detector.py`) and the
-playback architecture (server-side `ffplay` in `core/playback.py` vs. the
-browser `<audio>` element in `frontend/app.js`) are under active strategic
-review. Do NOT refactor, replace, or "improve" the detection logic or the
-playback routing unless explicitly asked to. Small bug fixes within the current
-design are fine; architectural changes are not.
+The audio-detection approach (RMS loudness in `core/detector.py`) is under
+active strategic review. Do NOT refactor, replace, or "improve" the detection
+logic unless explicitly asked to. Small bug fixes within the current design are
+fine; architectural changes are not.
