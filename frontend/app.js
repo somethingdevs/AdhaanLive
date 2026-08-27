@@ -43,6 +43,7 @@ const statusText = document.getElementById("status-text");
 const nextPrayerNameEl = document.getElementById("next-prayer-name");
 const nextPrayerCountdownEl = document.getElementById("next-prayer-countdown");
 const prayerGrid = document.getElementById("prayer-grid");
+const scheduleTimezoneEl = document.getElementById("schedule-timezone");
 
 const audioHint = document.getElementById("audio-hint");
 const player = document.getElementById("adhaan-player");
@@ -54,7 +55,7 @@ const themeToggle = document.getElementById("theme-toggle");
  *********************************/
 let audioUnlocked = localStorage.getItem("audioUnlocked") === "true";
 let muted = false;
-let prayerSchedule = {};
+let prayerSchedule = null;
 let currentPrayer = null;
 let nextPrayer = null;
 let nextPrayerTime = null;
@@ -258,7 +259,17 @@ pollStatus();
  * SCHEDULE
  *********************************/
 async function loadSchedule() {
-  prayerSchedule = await fetchJSON("/schedule");
+  const schedule = await fetchJSON("/schedule");
+  if (schedule.error || !schedule.prayers || !schedule.timezone) {
+    prayerSchedule = null;
+    scheduleTimezoneEl.textContent = "";
+    nextPrayerNameEl.textContent = "—";
+    nextPrayerCountdownEl.textContent = "--:--:--";
+    prayerGrid.innerHTML = "";
+    return;
+  }
+
+  prayerSchedule = schedule;
   computePrayerState();
   renderGrid();
 }
@@ -266,56 +277,42 @@ setInterval(loadSchedule, SCHEDULE_POLL_MS);
 loadSchedule();
 
 function computePrayerState() {
-  const now = new Date();
-  const entries = Object.entries(prayerSchedule)
-    .map(([n, t]) => {
-      const [h, m] = t.split(":");
-      const d = new Date();
-      d.setHours(h, m, 0, 0);
-      return { name: n, time: d };
-    })
-    .sort((a, b) => a.time - b.time);
-
-  for (let i = 0; i < entries.length; i++) {
-    if (now < entries[i].time) {
-      nextPrayer = entries[i].name;
-      nextPrayerTime = entries[i].time;
-      currentPrayer = entries[i - 1]?.name ?? null;
-      break;
-    }
-  }
-
-  if (!nextPrayer && prayerSchedule.Fajr) {
-    const [h, m] = prayerSchedule.Fajr.split(":");
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(h, m, 0, 0);
-    nextPrayer = "Fajr";
-    nextPrayerTime = d;
-    currentPrayer = "Isha";
-  }
+  const prayerState = getPrayerState(prayerSchedule);
+  currentPrayer = prayerState.currentPrayer;
+  nextPrayer = prayerState.nextPrayer;
+  nextPrayerTime = prayerState.nextPrayerTime;
 
   nextPrayerNameEl.textContent = nextPrayer ?? "—";
+  scheduleTimezoneEl.textContent = `(${prayerSchedule.timezone})`;
 }
 
 setInterval(() => {
-  if (!nextPrayerTime) return;
-  const diff = Math.max(
-    0,
-    Math.floor((nextPrayerTime - new Date()) / 1000)
-  );
+  const diff = countdownSeconds(nextPrayerTime);
+  if (diff === null) {
+    nextPrayerCountdownEl.textContent = "--:--:--";
+    return;
+  }
+  if (diff === 0) {
+    computePrayerState();
+    renderGrid();
+    return;
+  }
   nextPrayerCountdownEl.textContent =
     `${pad(Math.floor(diff / 3600))}:${pad(Math.floor(diff / 60) % 60)}:${pad(diff % 60)}`;
 }, 1000);
 
 function renderGrid() {
   prayerGrid.innerHTML = "";
-  for (const [name, time] of Object.entries(prayerSchedule)) {
+  for (const { name, timestamp } of prayerEntries(prayerSchedule)) {
     const d = document.createElement("div");
     d.className = "prayer";
     if (name === currentPrayer) d.classList.add("current");
     if (name === nextPrayer) d.classList.add("upcoming");
-    d.innerHTML = `<div>${name}</div><div>${time.slice(0, 5)}</div>`;
+    const displayTime = formatPrayerTime(
+      timestamp,
+      prayerSchedule.timezone
+    );
+    d.innerHTML = `<div>${name}</div><div>${displayTime}</div>`;
     prayerGrid.appendChild(d);
   }
 }

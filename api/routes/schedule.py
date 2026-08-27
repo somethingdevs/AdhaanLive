@@ -9,4 +9,4 @@ FILE = Path("assets/prayer_times.json")
 def schedule():
     if not FILE.exists():
         return {"error": "schedule not loaded"}
-    return json.loads(FILE.read_text())
+    return json.loads(FILE.read_text(encoding="utf-8"))

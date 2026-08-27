@@ -21,7 +21,7 @@ For development and automated tests:
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -q
-node --test tests/playback_policy.test.js
+node --test tests/playback_policy.test.js tests/schedule_time.test.js
 python scripts/smoke_test.py
 ```
 
@@ -33,6 +33,7 @@ Configure your mosque and location in `config.yml`:
 settings:
   city: "Dallas"
   country: "US"
+  timezone: "America/Chicago"  # IANA timezone; handles CST/CDT automatically
   method: 2  # Calculation method for prayer times (2-ISNA)
   school: 1  # 0 - Shafi, 1 - Hanafi
 
@@ -42,6 +43,12 @@ livestream:
   browser: "chrome"
   wait_time: 3
 ```
+
+All five prayer settings are validated at startup and sent to the Aladhan
+client where applicable. Prayer timestamps, refreshes, scheduler comparisons,
+API responses, and browser countdowns use the configured mosque timezone. This
+keeps Dallas scheduling correct when the server or browser runs in another
+timezone such as Atlanta or UTC.
 
 ## Running
 
@@ -79,5 +86,5 @@ The frontend is served at `http://localhost:8000/`.
     - `schedule.py` — `GET /schedule` (today's prayer times from `assets/prayer_times.json`)
     - `control.py` — `POST /control/detection/start`, `POST /control/detection/stop`
     - `client_logs.py` — `POST /client-log` (frontend event logging)
-- `frontend/` — `index.html`, `app.js` (polls `/status` and `/schedule`, plays the stream in a browser `<audio>` element; "Silence (this device)" dismisses audio locally for the current Adhaan), `styles.css`.
+- `frontend/` — `index.html`, `app.js` (polls `/status` and `/schedule`, displays the schedule in the configured mosque timezone, and plays the stream in a browser `<audio>` element), pure playback/schedule policy modules, and `styles.css`. "Silence (this device)" dismisses audio locally for the current Adhaan.
 - `assets/` — runtime output (gitignored): `prayer_times.json`, logs, `audio_logs/`, `adhaan_log.csv`.

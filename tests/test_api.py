@@ -54,6 +54,35 @@ def test_schedule_response_when_not_loaded(monkeypatch, tmp_path):
     assert response.json() == {"error": "schedule not loaded"}
 
 
+def test_schedule_response_includes_timezone_and_absolute_prayer_times(
+    monkeypatch,
+    tmp_path,
+):
+    schedule_file = tmp_path / "prayer_times.json"
+    schedule_file.write_text(
+        """{
+          "date": "2026-08-27",
+          "timezone": "America/Chicago",
+          "prayers": {
+            "Dhuhr": "2026-08-27T13:30:00-05:00"
+          }
+        }""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schedule_routes, "FILE", schedule_file)
+
+    response = client.get("/schedule")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "date": "2026-08-27",
+        "timezone": "America/Chicago",
+        "prayers": {
+            "Dhuhr": "2026-08-27T13:30:00-05:00",
+        },
+    }
+
+
 def test_start_detection_success(monkeypatch):
     started_with = []
     monkeypatch.setattr(

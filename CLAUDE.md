@@ -11,8 +11,9 @@ livestream and plays it in users' homes around prayer time. Python backend
   server (port 8000), the stream refresher, the prayer scheduler, and the
   daily prayer-time refresh.
 - Frontend is served at http://localhost:8000/ (static files from `frontend/`).
-- Configuration lives in `config.yml` (city/country/method for prayer times,
-  plus a `livestream` section).
+- Configuration lives in `config.yml` (city/country/IANA timezone/method/school
+  for prayer times, plus a `livestream` section). These prayer settings are
+  validated centrally; do not replace them with server-local time assumptions.
 - Runtime dependencies are in `requirements.txt`; development/test dependencies
   are in `requirements-dev.txt`.
 
@@ -56,7 +57,7 @@ livestream and plays it in users' homes around prayer time. Python backend
 - Install test dependencies with `pip install -r requirements-dev.txt`.
 - Run backend tests with `python -m pytest -q`.
 - Run browser playback-policy tests with
-  `node --test tests/playback_policy.test.js`.
+  `node --test tests/playback_policy.test.js tests/schedule_time.test.js`.
 - Run the controlled local smoke test with `python scripts/smoke_test.py`.
   It imports the entry point and briefly serves the API/frontend locally; it
   does not contact the mosque stream or wait for a real Adhaan.

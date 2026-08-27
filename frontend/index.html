@@ -51,7 +51,9 @@
   <main class="main">
 
     <section class="next-prayer">
-      <div class="label">Next Prayer</div>
+      <div class="label">
+        Next Prayer <span id="schedule-timezone"></span>
+      </div>
       <div class="prayer-name" id="next-prayer-name">—</div>
       <div class="countdown" id="next-prayer-countdown">--:--:--</div>
     </section>
@@ -76,6 +78,7 @@
 <audio id="adhaan-player" preload="none"></audio>
 
 <script src="/static/playback_policy.js"></script>
+<script src="/static/schedule_time.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

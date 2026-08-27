@@ -81,14 +81,25 @@ def main() -> None:
         if health != {"status": "ok"}:
             raise RuntimeError(f"Unexpected health response: {health}")
 
+        schedule = json.loads(fetch(f"{base_url}/schedule"))
+        if "error" not in schedule:
+            required_schedule_fields = {"date", "timezone", "prayers"}
+            if not required_schedule_fields.issubset(schedule):
+                raise RuntimeError(f"Unexpected schedule response: {schedule}")
+
         index = fetch(f"{base_url}/").decode("utf-8")
         policy = fetch(f"{base_url}/static/playback_policy.js").decode("utf-8")
+        schedule_time = fetch(
+            f"{base_url}/static/schedule_time.js"
+        ).decode("utf-8")
         app_js = fetch(f"{base_url}/static/app.js").decode("utf-8")
 
         if 'id="adhaan-player"' not in index:
             raise RuntimeError("Frontend did not include the Adhaan audio player")
         if "shouldPlayAdhaan" not in policy or "shouldPlayAdhaan" not in app_js:
             raise RuntimeError("Frontend playback policy was not served or connected")
+        if "getPrayerState" not in schedule_time or "getPrayerState" not in app_js:
+            raise RuntimeError("Frontend schedule policy was not served or connected")
 
         print("Smoke test passed: imports, health endpoint, and frontend assets are ready")
     finally:

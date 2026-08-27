@@ -1,6 +1,7 @@
 settings:
   city: "Dallas"
   country: "US"
+  timezone: "America/Chicago" # IANA timezone for the configured mosque
   method: 2  # Calculation method for prayer times (2-ISNA)
   school: 1 # 0 - Shafi 1 - Hanafi
 
