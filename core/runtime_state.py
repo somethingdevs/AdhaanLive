@@ -1,5 +1,5 @@
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict
 
 
@@ -33,14 +33,14 @@ class RuntimeState:
     # Internal helpers
     def _set_event(self, event: str):
         self.last_event = event
-        self.last_event_time = datetime.utcnow()
+        self.last_event_time = datetime.now(timezone.utc)
 
     # State transitions
     def start_detection(self, prayer: Optional[str] = None):
         with self.lock:
             self.detection_active = True
             self.current_prayer = prayer
-            self.started_at = datetime.utcnow()
+            self.started_at = datetime.now(timezone.utc)
             self._set_event("DETECTION_STARTED")
 
     def stop_detection(self):
@@ -56,7 +56,7 @@ class RuntimeState:
     def end_adhaan(self):
         with self.lock:
             self.adhaan_active = False
-            self.ended_at = datetime.utcnow()
+            self.ended_at = datetime.now(timezone.utc)
             self._set_event("ADHAAN_ENDED")
 
     def reset_cycle(self):

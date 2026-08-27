@@ -6,6 +6,10 @@ pyyaml
 ffmpeg-python
 selenium
 selenium-wire
+# selenium-wire imports blinker._saferef, removed in blinker 1.8.
+blinker<1.8
+# selenium-wire still imports pkg_resources, provided by setuptools.
+setuptools<81
 
 # Optional: local-audio extras (pip install -r requirements.txt with these uncommented)
 # sounddevice

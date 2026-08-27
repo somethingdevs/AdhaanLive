@@ -13,7 +13,8 @@ livestream and plays it in users' homes around prayer time. Python backend
 - Frontend is served at http://localhost:8000/ (static files from `frontend/`).
 - Configuration lives in `config.yml` (city/country/method for prayer times,
   plus a `livestream` section).
-- Note: there is currently no `requirements.txt` — only `pyproject.toml`.
+- Runtime dependencies are in `requirements.txt`; development/test dependencies
+  are in `requirements-dev.txt`.
 
 ## Architecture / module map
 - `main.py` — bootstraps and orchestrates all threads; handles startup/shutdown.
@@ -46,24 +47,29 @@ livestream and plays it in users' homes around prayer time. Python backend
 ## Conventions
 - Python, 4-space indentation, max line length 100 (see `.pylintrc`).
 - Log via the stdlib `logging` module with bracketed tags, e.g. `[DETECT]`,
-  `[SCHED]`, `[PLAY]`, `[STREAM]`. Keep that style.
+  `[SCHED]`, `[STREAM]`. Keep that style.
 - All runtime state transitions go through `RuntimeState` methods — never mutate
   flags directly from other modules.
 - Background work uses daemon threads with stop-events and `join` timeouts.
 
-## Punch list (safe to work on)
-1. **Bug:** `api/routes/control.py` reads `state.stream_url`, which
-   `RuntimeState` never defines, so `/control/detection/start` returns a 500.
-   Source the URL from the `StreamRefresher` instead.
-2. `config.yml`'s `livestream.url` is ignored; `utils/livestream.py` hardcodes
-   `PAGE_URL`. Make the page URL config-driven via `config_loader`.
-3. No `requirements.txt` exists — generate one from `pyproject.toml`.
-4. `README.md` is stale: it references `adhaan_streamer.py`, `util.py`, and
-   `environment.yml`, none of which exist. Rewrite it to match the current
-   structure and run instructions.
-5. `prayer_refresh_loop` in `main.py` writes `assets/prayer_times.json` without
-   guaranteeing `assets/` exists (it currently works only as a side effect of
-   logging setup). Make it robust.
+## Testing
+- Install test dependencies with `pip install -r requirements-dev.txt`.
+- Run backend tests with `python -m pytest -q`.
+- Run browser playback-policy tests with
+  `node --test tests/playback_policy.test.js`.
+- Run the controlled local smoke test with `python scripts/smoke_test.py`.
+  It imports the entry point and briefly serves the API/frontend locally; it
+  does not contact the mosque stream or wait for a real Adhaan.
+- `tests/sound_test.py` is a manual, live-stream experiment, not an automated
+  test. Keep live validation separate from the deterministic suite.
+
+## Current priorities
+1. Keep deterministic coverage around runtime state, prayer selection and
+   windows, API responses, and client-only playback decisions.
+2. Validate the full pipeline against the real configured livestream during a
+   prayer window, measuring false positives, detection delay, and browser
+   playback reliability.
+3. Add authentication before exposing administrative control routes publicly.
 
 ## IMPORTANT — playback is client-only (settled)
 Audio plays ONLY in the browser, via the `<audio>` element in

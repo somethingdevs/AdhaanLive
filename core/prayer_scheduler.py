@@ -8,6 +8,7 @@ import time
 import threading
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 from core.detector import start_audio_detection, stop_audio_detection
 from core.runtime_state import state
@@ -37,8 +38,9 @@ def load_prayer_times() -> dict:
         return {}
 
 
-def get_next_prayer(prayers: dict):
-    now = datetime.now()
+def get_next_prayer(prayers: dict, now: Optional[datetime] = None):
+    """Return the next prayer using an injectable clock for deterministic tests."""
+    now = now or datetime.now()
     today = now.date()
     upcoming = []
 
@@ -62,6 +64,14 @@ def get_next_prayer(prayers: dict):
         return "Unknown", now + timedelta(hours=6)
 
 
+def get_prayer_window(prayer_dt: datetime):
+    """Return the detection wake time and hard timeout for a prayer."""
+    return (
+        prayer_dt - timedelta(minutes=WAKE_MINUTES_BEFORE),
+        prayer_dt + timedelta(minutes=TIMEOUT_MINUTES),
+    )
+
+
 # -------------------------------------
 # Scheduler core loop
 # -------------------------------------
@@ -80,7 +90,7 @@ def _scheduler_loop(get_stream_url_fn):
                 continue
 
             name, prayer_dt = get_next_prayer(prayers)
-            wake_dt = prayer_dt - timedelta(minutes=WAKE_MINUTES_BEFORE)
+            wake_dt, timeout_dt = get_prayer_window(prayer_dt)
 
             sleep_sec = max(0, (wake_dt - datetime.now()).total_seconds())
             logging.info(
@@ -113,8 +123,6 @@ def _scheduler_loop(get_stream_url_fn):
             # -----------------------------
             logging.info(f"[SCHED] Starting detection for {name}")
             start_audio_detection(stream_url)
-
-            timeout_dt = prayer_dt + timedelta(minutes=TIMEOUT_MINUTES)
 
             # Wait for adhaan or timeout
             while datetime.now() < timeout_dt:

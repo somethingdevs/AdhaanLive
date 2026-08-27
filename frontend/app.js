@@ -234,18 +234,18 @@ async function pollStatus() {
     ? "🟡 Listening for Adhaan"
     : "Idle";
 
-  // A new adhaan clears any prior dismissal.
-  if (!s.adhaan_active) {
-    dismissedThisAdhaan = false;
-  }
+  dismissedThisAdhaan = dismissalForStatus(
+    s.adhaan_active,
+    dismissedThisAdhaan
+  );
 
-  if (
-    s.adhaan_active &&
-    s.stream_url &&
-    audioUnlocked &&
-    !muted &&
-    !dismissedThisAdhaan
-  ) {
+  if (shouldPlayAdhaan({
+    adhaanActive: s.adhaan_active,
+    streamUrl: s.stream_url,
+    audioUnlocked,
+    muted,
+    dismissedThisAdhaan,
+  })) {
     playAdhaan(s.stream_url);
   } else {
     stopAdhaan();

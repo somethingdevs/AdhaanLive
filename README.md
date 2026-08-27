@@ -16,6 +16,17 @@ pip install -r requirements.txt
 
 Optional local-audio extras (`sounddevice`, `pyaudio`, `soundfile`) are listed as commented-out lines in `requirements.txt` — uncomment and install them if you need local audio device access.
 
+For development and automated tests:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+node --test tests/playback_policy.test.js
+python scripts/smoke_test.py
+```
+
+The smoke test checks imports, the local health endpoint, and static frontend serving. It does not connect to the mosque livestream or wait for a real Adhaan.
+
 Configure your mosque and location in `config.yml`:
 
 ```yaml
