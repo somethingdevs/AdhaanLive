@@ -13,10 +13,6 @@ dependencies = [
   "pyyaml",
   "tzdata",
   "ffmpeg-python",
-  "selenium",
-  "selenium-wire",
-  "blinker<1.8",
-  "setuptools<81",
 ]
 
 

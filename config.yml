@@ -7,6 +7,3 @@ settings:
 
 livestream:
   url: "https://iaccplano.click2stream.com/" # Mosque click2stream link
-  auto_unmute: true  # Set to false if you don’t want Selenium to unmute
-  browser: "chrome"  # Options: chrome, brave
-  wait_time: 3  # Time to wait before interacting with the livestream

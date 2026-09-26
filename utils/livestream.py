@@ -1,246 +1,117 @@
-# utils/livestream.py
-# ======================================================
-#   QUIET LIVESTREAM SCRAPER (SELENIUMWIRE SILENCED)
-# ======================================================
+"""Resolve public Click2Stream/Angelcam HLS URLs without a browser."""
 
-from __future__ import annotations
-
-import time
+import html
 import logging
-import warnings
-import asyncio
+import re
+import time
 from typing import Optional
+from urllib.parse import urlsplit
 
-# ------------------------------------------------------
-# SILENCE *ALL* SELENIUMWIRE / ASYNCIO / MITMPROXY NOISE
-# ------------------------------------------------------
-
-# Kill runtime warnings (coroutines not awaited, loop closed)
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-# Silence asyncio internals
-logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-
-# Silence seleniumwire / mitmproxy / http2 internals
-for noisy in [
-    "seleniumwire",
-    "seleniumwire.handler",
-    "seleniumwire.server",
-    "seleniumwire.storage",
-    "seleniumwire.proxy",
-    "mitmproxy",
-    "mitmproxy.server",
-    "mitmproxy.controller",
-    "mitmproxy.addonmanager",
-    "mitmproxy.proxy",
-    "mitmproxy.http",
-    "mitmproxy.websocket",
-    "h2",
-    "h2.connection",
-    "urllib3.connectionpool",
-    "WDM",
-    "undetected_chromedriver",
-]:
-    logging.getLogger(noisy).setLevel(logging.CRITICAL)
-
-# Silence Chrome DevTools spam
-logging.getLogger(
-    "selenium.webdriver.remote.remote_connection"
-).setLevel(logging.CRITICAL)
-
-# ------------------------------------------------------
-# SELENIUM IMPORTS (AFTER SILENCING)
-# ------------------------------------------------------
-
-from seleniumwire import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
+import requests
 
 from utils.config_loader import load_config
 
 
-# ======================================================
-#   GET M3U8 URL (QUIET MODE)
-# ======================================================
+REQUEST_TIMEOUT_SECONDS = 20
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 2
+ANGELCAM_PLAYER_URL = "https://v.angelcam.com/iframe"
+
+# These are public player configuration fields, not JavaScript to execute.
+PLAYER_ID_PATTERN = re.compile(
+    r"""new\s+Angelcam\.player\s*\(\s*['"][^'"]+['"]\s*,\s*\{\s*"""
+    r"""(?:id|['"]id['"])\s*:\s*['"]([A-Za-z0-9_-]+)['"]""",
+)
+HLS_PATTERN = re.compile(
+    r"""['"]hls['"]\s*:\s*(?P<quote>['"])(?P<url>.*?)(?P=quote)""",
+    re.DOTALL,
+)
+JS_ESCAPE_PATTERN = re.compile(r"""\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[/\\'"])""")
+
+
+def _decode_player_url(value: str) -> str:
+    """Decode the escaped URL string emitted by the Angelcam player template."""
+    def decode(match):
+        escaped = match.group()[1:]
+        if escaped[0] in ("u", "x"):
+            return chr(int(escaped[1:], 16))
+        return escaped
+
+    return html.unescape(JS_ESCAPE_PATTERN.sub(decode, value))
+
+
+def _is_hls_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.netloc)
+        and parsed.path.lower().endswith(".m3u8")
+        and "\\" not in value
+        and not any(ord(character) < 32 for character in value)
+    )
+
+
+def _fetch_page(url: str, **kwargs) -> str:
+    response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, **kwargs)
+    response.raise_for_status()
+    return response.text
+
 
 def get_m3u8_url(page_url: str) -> Optional[str]:
+    """Resolve a public page, Angelcam iframe, or explicitly configured HLS URL.
+
+    Public pages contain an Angelcam player ID. Its iframe response contains a
+    fresh signed HLS URL; no browser, JavaScript execution, or account is needed.
+    This is a provider-specific HTML integration, not a guaranteed public API.
     """
-    Extract .m3u8 stream URL with zero terminal noise.
-    """
-
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--log-level=3")
-    chrome_options.add_experimental_option(
-        "excludeSwitches", ["enable-logging"]
-    )
-
-    seleniumwire_options = {
-        "exclude_hosts": [
-            "google.com",
-            "facebook.com",
-            "analytics",
-            "googletagmanager.com",
-            "connect.facebook.net",
-        ],
-        "verify_ssl": False,
-        "request_storage_max_size": 200,
-    }
-
-    driver = webdriver.Chrome(
-        options=chrome_options,
-        seleniumwire_options=seleniumwire_options,
-    )
-
-    start_time = time.time()
-
     try:
-        logging.info("[STREAM] Loading livestream page...")
-        driver.get(page_url)
+        if _is_hls_url(page_url):
+            return page_url
 
-        # Enter iframe if present (quiet)
-        try:
-            iframe = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "iframe"))
-            )
-            driver.switch_to.frame(iframe)
-        except Exception:
-            pass
+        if urlsplit(page_url).scheme not in ("http", "https"):
+            logging.warning("[STREAM] Livestream URL must use HTTP or HTTPS")
+            return None
 
-        # Attempt to click play (quiet)
-        try:
-            video = WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.TAG_NAME, "video"))
-            )
-            ActionChains(driver).move_to_element(video).click().perform()
-        except Exception:
-            pass
+        page = _fetch_page(page_url)
+        player = PLAYER_ID_PATTERN.search(page)
+        if player:
+            page = _fetch_page(ANGELCAM_PLAYER_URL, params={"v": player.group(1)})
 
-        # Sniff .m3u8 requests
-        timeout = time.time() + 40
-        while time.time() < timeout:
-            for req in driver.requests:
-                if (
-                    req.response
-                    and "angelcam.com" in req.url
-                    and ".m3u8" in req.url
-                ):
-                    elapsed = time.time() - start_time
-                    logging.info(
-                        f"[STREAM] Found M3U8 URL ({elapsed:.1f}s)"
-                    )
-                    return req.url
+        stream = HLS_PATTERN.search(page)
+        if not stream:
+            logging.warning("[STREAM] Public player has no HLS URL; offline or markup changed")
+            return None
 
-            time.sleep(0.25)
+        stream_url = _decode_player_url(stream.group("url"))
+        if not _is_hls_url(stream_url):
+            logging.warning("[STREAM] Public player returned an invalid HLS URL")
+            return None
 
-        logging.warning("[STREAM] Timeout — no .m3u8 URL found")
+        logging.info("[STREAM] HLS URL resolved over HTTP")
+        return stream_url
+    except (requests.RequestException, ValueError) as exc:
+        # Request exception strings may contain signed stream tokens.
+        logging.warning("[STREAM] URL resolution failed (%s)", type(exc).__name__)
         return None
 
-    except Exception as e:
-        logging.error(f"[STREAM] get_m3u8_url error: {e}")
-        return None
-
-    finally:
-        # --- HARD CLEANUP (prevents Http2SingleStreamLayer noise) ---
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-        try:
-            driver.backend.storage.clear_requests()
-        except Exception:
-            pass
-
-
-# ======================================================
-#   RETRY WRAPPER
-# ======================================================
 
 def get_new_url_func() -> Optional[str]:
-    """
-    Retry wrapper with minimal logging.
-    """
-    config = load_config()
-    PAGE_URL = config.get("livestream", {}).get("url") or "https://iaccplano.click2stream.com/"
-    max_retries = 3
+    """Re-resolve the configured source on each refresh to renew signed URLs."""
+    livestream = load_config().get("livestream", {})
+    page_url = livestream.get("url") if isinstance(livestream, dict) else None
+    if not isinstance(page_url, str) or not page_url.strip():
+        logging.error("[STREAM] Set livestream.url in config.yml")
+        return None
 
-    for attempt in range(1, max_retries + 1):
-        url = get_m3u8_url(PAGE_URL)
+    for attempt in range(1, MAX_RETRIES + 1):
+        url = get_m3u8_url(page_url.strip())
         if url:
-            logging.info(
-                f"[STREAM] New URL acquired (attempt {attempt})"
-            )
+            logging.info("[STREAM] New URL acquired (attempt %s)", attempt)
             return url
 
-        logging.warning(
-            f"[STREAM] Retry {attempt}/{max_retries} failed"
-        )
-        time.sleep(2)
+        logging.warning("[STREAM] Retry %s/%s failed", attempt, MAX_RETRIES)
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY_SECONDS)
 
     logging.error("[STREAM] All retries failed")
     return None
-
-
-# ======================================================
-#   OPTIONAL: UNMUTE (KEPT QUIET)
-# ======================================================
-
-def unmute_video(
-    livestream_url: str,
-    auto_unmute: bool = True,
-    wait_time: int = 3,
-):
-    """
-    Optional manual unmute helper (kept quiet).
-    """
-    if not auto_unmute:
-        return
-
-    from seleniumwire import webdriver
-    from selenium.webdriver.chrome.options import Options
-
-    options = Options()
-    options.add_experimental_option("detach", True)
-
-    driver = webdriver.Chrome(options=options)
-    driver.get(livestream_url)
-
-    try:
-        iframe = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "iframe"))
-        )
-        driver.switch_to.frame(iframe)
-
-        video = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "video"))
-        )
-
-        actions = ActionChains(driver)
-
-        for _ in range(5):
-            actions.move_to_element(video).perform()
-            time.sleep(wait_time)
-            try:
-                mute_btn = driver.find_element(
-                    By.CLASS_NAME,
-                    "drawer-icon.media-control-icon",
-                )
-                mute_btn.click()
-                logging.info("[STREAM] Stream unmuted")
-                break
-            except Exception:
-                pass
-
-    except Exception:
-        pass
-
-    finally:
-        logging.info(
-            "[STREAM] Browser open for verification"
-        )
